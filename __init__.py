@@ -20,8 +20,11 @@ import sys, traceback
 from datetime import datetime
 from collections import OrderedDict
 
+import gobject
+import gtk
 import numpy as np
 import pandas as pd
+import zmq
 from path_helpers import path
 from flatland import Integer, Boolean, Form, String
 from flatland.validation import ValueAtLeast, ValueAtMost
@@ -33,89 +36,48 @@ from microdrop.plugin_manager import (PluginGlobals, Plugin, IPlugin,
                                       implements, emit_signal,
                                       get_service_instance_by_name)
 from microdrop.app_context import get_app
-import gobject
-import gtk
+from zmq_plugin.plugin import Plugin as ZmqPlugin
+from zmq_plugin.schema import decode_content_data
 
 PluginGlobals.push_env('microdrop.managed')
 
 
-class ElectrodeController(object):
+class RouteControllerZmqPlugin(ZmqPlugin):
     '''
-    API for turning electrode(s) on/off.
-
-    Must handle:
-     - Updating state of hardware channels (if connected).
-     - Updating device user interface.
+    API for adding/clearing droplet routes.
     '''
-    def __init__(self):
-        self.control_board = None
+    def __init__(self, parent, *args, **kwargs):
+        self.parent = parent
+        super(RouteControllerZmqPlugin, self).__init__(*args, **kwargs)
 
-    def get_control_board(self):
-        if self.control_board is None:
-            try:
-                plugin = get_service_instance_by_name('wheelerlab'
-                                                      '.dmf_control_board')
-            except:
-                logging.warning('Could not get connection to control board.')
-                return None
-            else:
-                self.control_board = plugin.control_board
-        return self.control_board
-
-    def set_electrode_state(self, electrode_id, state):
+    def add_route(self, electrode_ids):
         '''
-        Set the state of a single electrode.
+        Add droplet route.
 
         Args:
 
-            electrode_id (str) : Electrode identifier (e.g., `"electrode001"`)
-            state (int) : State of electrode
+            electrode_ids (list) : Ordered list of identifiers of electrodes on
+                route.
         '''
-        self.set_electrode_states(pd.Series([state], index=[electrode_index]))
+        drop_routes = self.parent.get_routes()
+        route_i = (drop_routes.route_i.max() + 1
+                    if drop_routes.shape[0] > 0 else 0)
+        drop_route = (pd.DataFrame(electrode_ids, columns=['electrode_i'])
+                      .reset_index().rename(columns={'index': 'transition_i'}))
+        drop_route.insert(0, 'route_i', route_i)
+        drop_routes = drop_routes.append(drop_route, ignore_index=True)
+        self.parent.set_routes(drop_routes)
+        return {'route_i': route_i, 'drop_routes': drop_routes}
 
-    def set_electrode_states(self, electrode_states):
-        '''
-        Set the state of multiple electrodes.
+    def on_execute__add_route(self, request):
+        data = decode_content_data(request)
+        try:
+            return self.add_route(data['drop_route'])
+        except:
+            logger.error(str(data), exc_info=True)
 
-        Args:
-
-            electrode_states (pandas.Series) : State of electrodes, indexed by
-                electrode identifier (e.g., `"electrode001"`).
-        '''
-        colors = (electrode_states.repeat(3).reshape(-1, 3) *
-                  np.array([255., 255., 255.]))
-        colors[colors == 0] = None
-
-        app = get_app()
-        device_view = app.dmf_device_controller.view
-
-        # Update color of electrodes according to state.
-        for electrode_id, color_i in zip(electrode_states.index, colors):
-            color_i = color_i if not np.isnan(color_i[0]) else None
-            device_view.set_electrode_color(electrode_id, rgb_color=color_i)
-
-        if self.get_control_board() is not None and (self.control_board
-                                                     .connected()):
-            # Set the state of DMF control board channels.
-            step = app.protocol.get_step()
-            dmf_options = step.get_data('microdrop.gui.dmf_device_controller')
-            options = step.get_data('wheelerlab.dmf_control_board')
-
-            channel_states = dmf_options.state_of_channels
-            electrode_channels = (app.dmf_device
-                                  .actuated_channels(electrode_states.index))
-            channel_states[electrode_channels.values
-                           .tolist()] = electrode_states.values
-
-            try:
-                emit_signal("set_voltage", options.voltage,
-                            interface=IWaveformGenerator)
-                emit_signal("set_frequency", options.frequency,
-                            interface=IWaveformGenerator)
-                self.control_board.set_state_of_all_channels(channel_states)
-            except:
-                self.control_board = None
-                logger.error('[ElectrodeController]', exc_info=True)
+    def on_execute__get_routes(self, request):
+        return self.parent.get_routes()
 
 
 class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
@@ -142,6 +104,8 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
             config file, in a section named after this plugin's name attribute
     '''
     AppFields = Form.of(
+        String.named('hub_uri').using(optional=True,
+                                      default='tcp://localhost:31000'),
         Integer.named('transition_duration_ms').using(optional=True,
                                                       default=750),
     )
@@ -169,7 +133,20 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         self.timeout_id = None
         self.start_time = None
         self.transition_counter = 0
-        self.electrode_controller = ElectrodeController()
+        self.plugin = None
+        self.plugin_timeout_id = None
+
+    def get_routes(self):
+        step_options = self.get_step_options()
+        return step_options.get('drop_routes',
+                                pd.DataFrame(None, columns=['route_i',
+                                                            'electrode_i',
+                                                            'transition_i']))
+
+    def set_routes(self, df_drop_routes):
+        step_options = self.get_step_options()
+        step_options['drop_routes'] = df_drop_routes
+        self.set_step_values(step_options)
 
     def on_step_run(self):
         """
@@ -190,14 +167,12 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         logger.info('[DropletPlanningPlugin] on_step_run(): step #%d',
                     app.protocol.current_step_number)
         app_values = self.get_app_values()
-        device_step_options = app.dmf_device_controller.get_step_options()
         try:
             if self.timeout_id is not None:
                 # Timer was already set, so cancel previous timer.
                 gobject.source_remove(self.timeout_id)
 
-            drop_route_groups = (device_step_options.drop_routes
-                                 .groupby('route_i'))
+            drop_route_groups = self.get_routes().groupby('route_i')
             # Look up the drop routes for the current step.
             self.step_drop_routes = OrderedDict([(route_i, df_route_i)
                                                  for route_i, df_route_i in
@@ -221,10 +196,7 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
     def on_timer_tick(self, continue_=True):
         app = get_app()
         try:
-            device_step_options = (app.dmf_device_controller
-                                    .get_step_options())
-            electrode_indexes = (device_step_options.drop_routes.electrode_i
-                                 .unique())
+            electrode_indexes = self.get_routes().electrode_i.unique()
             electrode_ids = app.dmf_device.indexed_shapes.ix[electrode_indexes]
 
             if self.transition_counter < self.step_drop_route_lengths.max():
@@ -248,9 +220,11 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
                     electrode_states[transition_i.electrode_i] = 1
                 modified_electrode_states = (electrode_states_by_id
                                              [electrode_states_by_id >= 0])
-                (self.electrode_controller
-                 .set_electrode_states(modified_electrode_states))
-                gtk.idle_add(app.dmf_device_controller.view.update_draw_queue)
+                self.plugin.execute_async('wheelerlab'
+                                          '.electrode_controller_plugin',
+                                          'set_electrode_states',
+                                          electrode_states=
+                                          modified_electrode_states)
                 self.transition_counter += 1
             else:
                 if electrode_ids.shape[0] > 0:
@@ -261,8 +235,11 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
                                                        dtype=int)
                     (self.electrode_controller
                      .set_electrode_states(electrode_states_by_id))
-                    gtk.idle_add(app.dmf_device_controller.view
-                                 .update_draw_queue)
+                    self.plugin.execute_async('wheelerlab'
+                                              '.electrode_controller_plugin',
+                                              'set_electrode_states',
+                                              electrode_states=
+                                              electrode_states_by_id)
 
                 if self.timeout_id is not None:
                     gobject.source_remove(self.timeout_id)
@@ -303,6 +280,8 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         """
         Handler called when the current step is swapped.
         """
+        if self.plugin is not None:
+            self.plugin.execute_async(self.name, 'get_routes')
 
     def get_schedule_requests(self, function_name):
         """
@@ -312,7 +291,61 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         if function_name in ['on_step_run']:
             # Execute `on_step_run` before control board.
             return [ScheduleRequest(self.name, 'wheelerlab.dmf_control_board')]
+        elif function_name == 'on_plugin_enable':
+            return [ScheduleRequest('wheelerlab.zmq_hub_plugin', self.name)]
         return []
+
+    def on_plugin_enable(self):
+        """
+        Handler called once the plugin instance is enabled.
+
+        Note: if you inherit your plugin from AppDataController and don't
+        implement this handler, by default, it will automatically load all
+        app options from the config file. If you decide to overide the
+        default handler, you should call:
+
+            AppDataController.on_plugin_enable(self)
+
+        to retain this functionality.
+        """
+        super(DropletPlanningPlugin, self).on_plugin_enable()
+        app_values = self.get_app_values()
+
+        self.cleanup()
+        self.plugin = RouteControllerZmqPlugin(self, self.name,
+                                               app_values['hub_uri'])
+        # Initialize sockets.
+        self.plugin.reset()
+
+        def check_command_socket():
+            try:
+                msg_frames = (self.plugin.command_socket
+                              .recv_multipart(zmq.NOBLOCK))
+            except zmq.Again:
+                pass
+            else:
+                self.plugin.on_command_recv(msg_frames)
+            return True
+
+        self.plugin_timeout_id = gobject.timeout_add(10, check_command_socket)
+
+    def cleanup(self):
+        if self.plugin_timeout_id is not None:
+            gobject.source_remove(self.plugin_timeout_id)
+        if self.plugin is not None:
+            self.plugin = None
+
+    def on_plugin_disable(self):
+        """
+        Handler called once the plugin instance is disabled.
+        """
+        self.cleanup()
+
+    def on_app_exit(self):
+        """
+        Handler called just before the Microdrop application exits.
+        """
+        self.cleanup()
 
 
 PluginGlobals.pop_env()
