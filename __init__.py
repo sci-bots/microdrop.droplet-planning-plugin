@@ -50,6 +50,15 @@ class RouteControllerZmqPlugin(ZmqPlugin):
         self.parent = parent
         super(RouteControllerZmqPlugin, self).__init__(*args, **kwargs)
 
+    def check_sockets(self):
+        try:
+            msg_frames = self.command_socket.recv_multipart(zmq.NOBLOCK)
+        except zmq.Again:
+            pass
+        else:
+            self.on_command_recv(msg_frames)
+        return True
+
     def on_execute__add_route(self, request):
         data = decode_content_data(request)
         try:
@@ -65,6 +74,14 @@ class RouteControllerZmqPlugin(ZmqPlugin):
         try:
             return self.parent.clear_routes(electrode_id=
                                             data.get('electrode_id'))
+        except:
+            logger.error(str(data), exc_info=True)
+
+    def on_execute__execute_routes(self, request):
+        data = decode_content_data(request)
+        try:
+            return self.parent.execute_routes(data['transition_duration_ms'],
+                                              data.get('route_i'))
         except:
             logger.error(str(data), exc_info=True)
 
@@ -153,100 +170,108 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
             'Repeat' - repeat the step
             or 'Fail' - unrecoverable error (stop the protocol)
         """
-        app = get_app()
-        logger.info('[DropletPlanningPlugin] on_step_run(): step #%d',
-                    app.protocol.current_step_number)
         app_values = self.get_app_values()
-        try:
-            if self.timeout_id is not None:
-                # Timer was already set, so cancel previous timer.
-                gobject.source_remove(self.timeout_id)
 
-            drop_route_groups = self.get_routes().groupby('route_i')
-            # Look up the drop routes for the current step.
-            self.step_drop_routes = OrderedDict([(route_i, df_route_i)
-                                                 for route_i, df_route_i in
-                                                 drop_route_groups])
-            # Get the number of transitions in each drop route.
-            self.step_drop_route_lengths = drop_route_groups['route_i'].count()
-            self.transition_counter = 0
-            self.start_time = datetime.now()
-            gobject.idle_add(self.on_timer_tick, False)
-            self.timeout_id = gobject.timeout_add(app_values
-                                                  ['transition_duration_ms'],
-                                                  self.on_timer_tick)
-        except:
-            print "Exception in user code:"
-            print '-'*60
-            traceback.print_exc(file=sys.stdout)
-            print '-'*60
+        def on_error(*args):
+            logger.error('Error executing routes.', exc_info=True)
             # An error occurred while initializing Analyst remote control.
             emit_signal('on_step_complete', [self.name, 'Fail'])
 
-    def on_timer_tick(self, continue_=True):
+        try:
+            self.execute_routes(app_values['transition_duration_ms'],
+                                on_complete=self.on_step_routes_complete,
+                                on_error=on_error)
+        except:
+            on_error()
+
+    def execute_routes(self, transition_duration_ms, route_i=None,
+                       on_complete=None, on_error=None):
+        # Reset any routes that are currently running (if any).
+        self.reset_routes()
+        df_drop_routes = self.get_routes()
+
+        if route_i is not None:
+            # A route index was specified.  Only process transitions from
+            # specified route.
+            df_drop_routes = df_drop_routes[df_drop_routes.route_i == route_i]
+
+        drop_route_groups = df_drop_routes.groupby('route_i')
+        # Look up the drop routes for the current step.
+        self.step_drop_routes = OrderedDict([(route_i, df_route_i)
+                                             for route_i, df_route_i in
+                                             drop_route_groups])
+        # Get the number of transitions in each drop route.
+        self.step_drop_route_lengths = drop_route_groups['route_i'].count()
+        self.start_time = datetime.now()
+        gobject.idle_add(self.check_routes_progress, on_complete, on_error,
+                         False)
+        self.timeout_id = gobject.timeout_add(transition_duration_ms,
+                                              self.check_routes_progress,
+                                              on_complete, on_error)
+
+    def execute_transition(self, transition_i):
+        electrode_ids = self.get_routes().electrode_i.unique()
+
+        active_step_lengths = (self.step_drop_route_lengths
+                               .loc[self.step_drop_route_lengths >
+                                    transition_i])
+
+        electrode_states = pd.Series(-1, index=electrode_ids, dtype=int)
+        for route_i, length_i in active_step_lengths.iteritems():
+            # Remove custom coloring for previously active electrode.
+            if transition_i > 0:
+                s_transition_i = (self.step_drop_routes[route_i]
+                                  .iloc[transition_i - 1])
+                electrode_states[s_transition_i.electrode_i] = 0
+            # Add custom coloring to active electrode.
+            s_transition_i = self.step_drop_routes[route_i].iloc[transition_i]
+            electrode_states[s_transition_i.electrode_i] = 1
+        modified_electrode_states = electrode_states[electrode_states >= 0]
+        self.plugin.execute('wheelerlab.electrode_controller_plugin',
+                            'set_electrode_states',
+                            electrode_states=modified_electrode_states,
+                            wait_func=gtk_wait)
+
+    def reset_routes(self):
+        if self.timeout_id is not None:
+            gobject.source_remove(self.timeout_id)
+            self.timeout_id = None
+        self.start_time = None
+        self.transition_counter = 0
+
+        electrode_ids = self.get_routes().electrode_i.unique()
+        if electrode_ids.shape[0] > 0:
+            # At least one drop route exists for current step.
+            # Deactivate all electrodes on any droplet route from current step.
+            electrode_states = pd.Series(0, index=electrode_ids, dtype=int)
+            self.plugin.execute('wheelerlab'
+                                '.electrode_controller_plugin',
+                                'set_electrode_states',
+                                electrode_states=electrode_states,
+                                wait_func=gtk_wait)
+
+    def on_step_routes_complete(self, electrode_ids):
         app = get_app()
+        logger.info('[DropletPlanningPlugin] check_routes_progress(): step %d',
+                    app.protocol.current_step_number)
+        # Transitions along all droplet routes have been processed.
+        # Signal step has completed and reset plugin step state.
+        emit_signal('on_step_complete', [self.name, None])
+
+    def check_routes_progress(self, on_complete, on_error, continue_=True):
         try:
             electrode_ids = self.get_routes().electrode_i.unique()
 
             if self.transition_counter < self.step_drop_route_lengths.max():
-                active_step_lengths = (self.step_drop_route_lengths
-                                       .loc[self.step_drop_route_lengths >
-                                            self.transition_counter])
-
-                electrode_states = pd.Series(-1, index=electrode_ids,
-                                             dtype=int)
-                for route_i, length_i in active_step_lengths.iteritems():
-                    # Remove custom coloring for previously active electrode.
-                    if self.transition_counter > 0:
-                        transition_i = (self.step_drop_routes[route_i]
-                                        .iloc[self.transition_counter - 1])
-                        electrode_states[transition_i.electrode_i] = 0
-                    # Add custom coloring to active electrode.
-                    transition_i = (self.step_drop_routes[route_i]
-                                    .iloc[self.transition_counter])
-                    electrode_states[transition_i.electrode_i] = 1
-                modified_electrode_states = (electrode_states
-                                             [electrode_states >= 0])
-                self.plugin.execute('wheelerlab'
-                                    '.electrode_controller_plugin',
-                                    'set_electrode_states',
-                                    electrode_states=modified_electrode_states,
-                                    wait_func=gtk_wait)
+                self.execute_transition(self.transition_counter)
                 self.transition_counter += 1
             else:
-                command_status = {}
-                if electrode_ids.shape[0] > 0:
-                    # At least one drop route exists for current step.
-                    # Deactivate all electrodes on any droplet route from
-                    # current step.
-                    electrode_states = pd.Series(0, index=electrode_ids,
-                                                 dtype=int)
-                    self.plugin.execute('wheelerlab'
-                                        '.electrode_controller_plugin',
-                                        'set_electrode_states',
-                                        electrode_states=electrode_states,
-                                        wait_func=gtk_wait)
-
-                if self.timeout_id is not None:
-                    gobject.source_remove(self.timeout_id)
-                    self.timeout_id = None
-                self.start_time = None
-                self.transition_counter = 0
-
-                logger.info('[DropletPlanningPlugin] on_timer_tick(): step %d',
-                            app.protocol.current_step_number)
-                # Transitions along all droplet routes have been processed.
-                # Signal step has completed and reset plugin step state.
-                emit_signal('on_step_complete', [self.name, None])
+                self.reset_routes()
+                if on_complete is not None:
+                    on_complete(electrode_ids)
                 return False
         except:
-            print "Exception in user code:"
-            print '-'*60
-            traceback.print_exc(file=sys.stdout)
-            print '-'*60
-            emit_signal('on_step_complete', [self.name, 'Fail'])
-            self.timeout_id = None
-            self.remote = None
+            if on_error is not None: on_error()
             return False
         return continue_
 
@@ -304,17 +329,8 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         # Initialize sockets.
         self.plugin.reset()
 
-        def check_command_socket():
-            try:
-                msg_frames = (self.plugin.command_socket
-                              .recv_multipart(zmq.NOBLOCK))
-            except zmq.Again:
-                pass
-            else:
-                self.plugin.on_command_recv(msg_frames)
-            return True
-
-        self.plugin_timeout_id = gobject.timeout_add(10, check_command_socket)
+        self.plugin_timeout_id = gobject.timeout_add(10,
+                                                     self.plugin.check_sockets)
 
     def cleanup(self):
         if self.plugin_timeout_id is not None:
