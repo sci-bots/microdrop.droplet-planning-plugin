@@ -16,9 +16,10 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with droplet_planning_plugin.  If not, see <http://www.gnu.org/licenses/>.
 """
-import sys, traceback
-from datetime import datetime
 from collections import OrderedDict
+from datetime import datetime
+import logging
+import sys, traceback
 
 from flatland import Integer, Form, String
 from microdrop.app_context import get_app
@@ -34,6 +35,8 @@ import gobject
 import gtk
 import pandas as pd
 import zmq
+
+logger = logging.getLogger(__name__)
 
 PluginGlobals.push_env('microdrop.managed')
 
@@ -56,6 +59,14 @@ class RouteControllerZmqPlugin(ZmqPlugin):
 
     def on_execute__get_routes(self, request):
         return self.parent.get_routes()
+
+    def on_execute__clear_routes(self, request):
+        data = decode_content_data(request)
+        try:
+            return self.parent.clear_routes(electrode_id=
+                                            data.get('electrode_id'))
+        except:
+            logger.error(str(data), exc_info=True)
 
 
 class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
@@ -114,17 +125,18 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         self.plugin = None
         self.plugin_timeout_id = None
 
-    def get_routes(self):
-        step_options = self.get_step_options()
-        return step_options.get('drop_routes',
-                                pd.DataFrame(None, columns=['route_i',
-                                                            'electrode_i',
-                                                            'transition_i']))
+    def default_drop_routes(self):
+        return pd.DataFrame(None, columns=['route_i', 'electrode_i',
+                                           'transition_i'])
 
-    def set_routes(self, df_drop_routes):
-        step_options = self.get_step_options()
+    def get_routes(self, step_number=None):
+        step_options = self.get_step_options(step_number=step_number)
+        return step_options.get('drop_routes', self.default_drop_routes())
+
+    def set_routes(self, df_drop_routes, step_number=None):
+        step_options = self.get_step_options(step_number=step_number)
         step_options['drop_routes'] = df_drop_routes
-        self.set_step_values(step_options)
+        self.set_step_values(step_options, step_number=step_number)
 
     def on_step_run(self):
         """
@@ -341,5 +353,33 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         self.set_routes(drop_routes)
         return {'route_i': route_i, 'drop_routes': drop_routes}
 
+    def on_step_inserted(self, step_number, *args):
+        app = get_app()
+        logger.info('[on_step_inserted] current step=%s, created step=%s',
+                    app.protocol.current_step_number, step_number)
+        self.clear_routes(step_number=step_number)
+
+    def clear_routes(self, electrode_id=None, step_number=None):
+        '''
+        Clear all drop routes for protocol step that include the specified
+        electrode (identified by string identifier).
+        '''
+        app = get_app()
+        step_options = self.get_step_options(step_number)
+
+        if electrode_id is None:
+            # No electrode identifier specified.  Clear all step routes.
+            df_drop_routes = self.default_drop_routes()
+        else:
+            df_drop_routes = step_options['drop_routes']
+            # Find indexes of all routes that include electrode.
+            routes_to_clear = drop_routes.loc[df_drop_routes.electrode_i ==
+                                              electrode_id, 'route_i']
+            # Remove all routes that include electrode.
+            df_drop_routes = df_drop_routes.loc[~df_drop_routes.route_i
+                                                .isin(routes_to_clear
+                                                      .tolist())].copy()
+        step_options['drop_routes'] = df_drop_routes
+        self.set_step_values(step_options, step_number=step_number)
 
 PluginGlobals.pop_env()
