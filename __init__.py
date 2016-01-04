@@ -20,27 +20,24 @@ import sys, traceback
 from datetime import datetime
 from collections import OrderedDict
 
-import gobject
-import gtk
-import numpy as np
-import pandas as pd
-import zmq
-from path_helpers import path
-from flatland import Integer, Boolean, Form, String
-from flatland.validation import ValueAtLeast, ValueAtMost
+from flatland import Integer, Form, String
+from microdrop.app_context import get_app
 from microdrop.logger import logger
 from microdrop.plugin_helpers import (AppDataController, StepOptionsController,
                                       get_plugin_info)
 from microdrop.plugin_manager import (PluginGlobals, Plugin, IPlugin,
-                                      IWaveformGenerator, ScheduleRequest,
-                                      implements, emit_signal,
-                                      get_service_instance_by_name)
-from microdrop.app_context import get_app
+                                      ScheduleRequest, implements, emit_signal)
+from path_helpers import path
 from zmq_plugin.plugin import Plugin as ZmqPlugin
 from zmq_plugin.schema import decode_content_data
+import gobject
+import gtk
+import pandas as pd
+import zmq
 
 PluginGlobals.push_env('microdrop.managed')
 
+def gtk_wait(wait_duration_s): gtk.main_iteration_do()
 
 class RouteControllerZmqPlugin(ZmqPlugin):
     '''
@@ -50,29 +47,10 @@ class RouteControllerZmqPlugin(ZmqPlugin):
         self.parent = parent
         super(RouteControllerZmqPlugin, self).__init__(*args, **kwargs)
 
-    def add_route(self, electrode_ids):
-        '''
-        Add droplet route.
-
-        Args:
-
-            electrode_ids (list) : Ordered list of identifiers of electrodes on
-                route.
-        '''
-        drop_routes = self.parent.get_routes()
-        route_i = (drop_routes.route_i.max() + 1
-                    if drop_routes.shape[0] > 0 else 0)
-        drop_route = (pd.DataFrame(electrode_ids, columns=['electrode_i'])
-                      .reset_index().rename(columns={'index': 'transition_i'}))
-        drop_route.insert(0, 'route_i', route_i)
-        drop_routes = drop_routes.append(drop_route, ignore_index=True)
-        self.parent.set_routes(drop_routes)
-        return {'route_i': route_i, 'drop_routes': drop_routes}
-
     def on_execute__add_route(self, request):
         data = decode_content_data(request)
         try:
-            return self.add_route(data['drop_route'])
+            return self.parent.add_route(data['drop_route'])
         except:
             logger.error(str(data), exc_info=True)
 
@@ -196,18 +174,15 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
     def on_timer_tick(self, continue_=True):
         app = get_app()
         try:
-            electrode_indexes = self.get_routes().electrode_i.unique()
-            electrode_ids = app.dmf_device.indexed_shapes.ix[electrode_indexes]
+            electrode_ids = self.get_routes().electrode_i.unique()
 
             if self.transition_counter < self.step_drop_route_lengths.max():
                 active_step_lengths = (self.step_drop_route_lengths
                                        .loc[self.step_drop_route_lengths >
                                             self.transition_counter])
 
-                electrode_states = pd.Series(-1, index=electrode_indexes,
+                electrode_states = pd.Series(-1, index=electrode_ids,
                                              dtype=int)
-                electrode_states_by_id = pd.Series(electrode_states.values,
-                                                   index=electrode_ids)
                 for route_i, length_i in active_step_lengths.iteritems():
                     # Remove custom coloring for previously active electrode.
                     if self.transition_counter > 0:
@@ -218,28 +193,27 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
                     transition_i = (self.step_drop_routes[route_i]
                                     .iloc[self.transition_counter])
                     electrode_states[transition_i.electrode_i] = 1
-                modified_electrode_states = (electrode_states_by_id
-                                             [electrode_states_by_id >= 0])
-                self.plugin.execute_async('wheelerlab'
-                                          '.electrode_controller_plugin',
-                                          'set_electrode_states',
-                                          electrode_states=
-                                          modified_electrode_states)
+                modified_electrode_states = (electrode_states
+                                             [electrode_states >= 0])
+                self.plugin.execute('wheelerlab'
+                                    '.electrode_controller_plugin',
+                                    'set_electrode_states',
+                                    electrode_states=modified_electrode_states,
+                                    wait_func=gtk_wait)
                 self.transition_counter += 1
             else:
+                command_status = {}
                 if electrode_ids.shape[0] > 0:
                     # At least one drop route exists for current step.
                     # Deactivate all electrodes on any droplet route from
                     # current step.
-                    electrode_states_by_id = pd.Series(0, index=electrode_ids,
-                                                       dtype=int)
-                    (self.electrode_controller
-                     .set_electrode_states(electrode_states_by_id))
-                    self.plugin.execute_async('wheelerlab'
-                                              '.electrode_controller_plugin',
-                                              'set_electrode_states',
-                                              electrode_states=
-                                              electrode_states_by_id)
+                    electrode_states = pd.Series(0, index=electrode_ids,
+                                                 dtype=int)
+                    self.plugin.execute('wheelerlab'
+                                        '.electrode_controller_plugin',
+                                        'set_electrode_states',
+                                        electrode_states=electrode_states,
+                                        wait_func=gtk_wait)
 
                 if self.timeout_id is not None:
                     gobject.source_remove(self.timeout_id)
@@ -290,7 +264,8 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         """
         if function_name in ['on_step_run']:
             # Execute `on_step_run` before control board.
-            return [ScheduleRequest(self.name, 'wheelerlab.dmf_control_board')]
+            return [ScheduleRequest(self.name,
+                                    'wheelerlab.dmf_control_board_plugin')]
         elif function_name == 'on_plugin_enable':
             return [ScheduleRequest('wheelerlab.zmq_hub_plugin', self.name)]
         return []
@@ -346,6 +321,25 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         Handler called just before the Microdrop application exits.
         """
         self.cleanup()
+
+    def add_route(self, electrode_ids):
+        '''
+        Add droplet route.
+
+        Args:
+
+            electrode_ids (list) : Ordered list of identifiers of electrodes on
+                route.
+        '''
+        drop_routes = self.get_routes()
+        route_i = (drop_routes.route_i.max() + 1
+                    if drop_routes.shape[0] > 0 else 0)
+        drop_route = (pd.DataFrame(electrode_ids, columns=['electrode_i'])
+                      .reset_index().rename(columns={'index': 'transition_i'}))
+        drop_route.insert(0, 'route_i', route_i)
+        drop_routes = drop_routes.append(drop_route, ignore_index=True)
+        self.set_routes(drop_routes)
+        return {'route_i': route_i, 'drop_routes': drop_routes}
 
 
 PluginGlobals.pop_env()
