@@ -191,8 +191,8 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
 
         drop_route_groups = df_drop_routes.groupby('route_i')
         # Look up the drop routes for the current step.
-        self.step_drop_routes = OrderedDict([(route_i, df_route_i)
-                                             for route_i, df_route_i in
+        self.step_drop_routes = OrderedDict([(route_j, df_route_j)
+                                             for route_j, df_route_j in
                                              drop_route_groups])
         # Get the number of transitions in each drop route.
         self.step_drop_route_lengths = drop_route_groups['route_i'].count()
