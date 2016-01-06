@@ -19,11 +19,9 @@ along with droplet_planning_plugin.  If not, see <http://www.gnu.org/licenses/>.
 from collections import OrderedDict
 from datetime import datetime
 import logging
-import sys, traceback
 
-from flatland import Integer, Form, String
-from microdrop.app_context import get_app
-from microdrop.logger import logger
+from flatland import Integer, Form
+from microdrop.app_context import get_app, get_hub_uri
 from microdrop.plugin_helpers import (AppDataController, StepOptionsController,
                                       get_plugin_info)
 from microdrop.plugin_manager import (PluginGlobals, Plugin, IPlugin,
@@ -109,12 +107,8 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         -the values of these fields will be stored persistently in the microdrop
             config file, in a section named after this plugin's name attribute
     '''
-    AppFields = Form.of(
-        String.named('hub_uri').using(optional=True,
-                                      default='tcp://localhost:31000'),
-        Integer.named('transition_duration_ms').using(optional=True,
-                                                      default=750),
-    )
+    AppFields = Form.of(Integer.named('transition_duration_ms')
+                        .using(optional=True, default=750))
 
     '''
     StepFields
@@ -303,8 +297,6 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
             # Execute `on_step_run` before control board.
             return [ScheduleRequest(self.name,
                                     'wheelerlab.dmf_control_board_plugin')]
-        elif function_name == 'on_plugin_enable':
-            return [ScheduleRequest('wheelerlab.zmq_hub_plugin', self.name)]
         return []
 
     def on_plugin_enable(self):
@@ -321,11 +313,9 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         to retain this functionality.
         """
         super(DropletPlanningPlugin, self).on_plugin_enable()
-        app_values = self.get_app_values()
 
         self.cleanup()
-        self.plugin = RouteControllerZmqPlugin(self, self.name,
-                                               app_values['hub_uri'])
+        self.plugin = RouteControllerZmqPlugin(self, self.name, get_hub_uri())
         # Initialize sockets.
         self.plugin.reset()
 
@@ -380,7 +370,6 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         Clear all drop routes for protocol step that include the specified
         electrode (identified by string identifier).
         '''
-        app = get_app()
         step_options = self.get_step_options(step_number)
 
         if electrode_id is None:
