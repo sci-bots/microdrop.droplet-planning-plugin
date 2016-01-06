@@ -378,8 +378,8 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         else:
             df_drop_routes = step_options['drop_routes']
             # Find indexes of all routes that include electrode.
-            routes_to_clear = drop_routes.loc[df_drop_routes.electrode_i ==
-                                              electrode_id, 'route_i']
+            routes_to_clear = df_drop_routes.loc[df_drop_routes.electrode_i ==
+                                                 electrode_id, 'route_i']
             # Remove all routes that include electrode.
             df_drop_routes = df_drop_routes.loc[~df_drop_routes.route_i
                                                 .isin(routes_to_clear
