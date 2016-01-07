@@ -118,19 +118,46 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         self.plugin = None
         self.plugin_timeout_id = None
 
-    def default_drop_routes(self):
-        return pd.DataFrame(None, columns=['route_i', 'electrode_i',
-                                           'transition_i'])
+    def get_schedule_requests(self, function_name):
+        """
+        Returns a list of scheduling requests (i.e., ScheduleRequest instances)
+        for the function specified by function_name.
+        """
+        if function_name in ['on_step_run']:
+            # Execute `on_step_run` before control board.
+            return [ScheduleRequest(self.name,
+                                    'wheelerlab.dmf_control_board_plugin')]
+        return []
 
-    def get_routes(self, step_number=None):
-        step_options = self.get_step_options(step_number=step_number)
-        return step_options.get('drop_routes', self.default_drop_routes())
+    def on_plugin_enable(self):
+        self.cleanup()
+        self.plugin = RouteControllerZmqPlugin(self, self.name, get_hub_uri())
+        # Initialize sockets.
+        self.plugin.reset()
 
-    def set_routes(self, df_drop_routes, step_number=None):
-        step_options = self.get_step_options(step_number=step_number)
-        step_options['drop_routes'] = df_drop_routes
-        self.set_step_values(step_options, step_number=step_number)
+        self.plugin_timeout_id = gobject.timeout_add(10,
+                                                     self.plugin.check_sockets)
 
+    def on_plugin_disable(self):
+        """
+        Handler called once the plugin instance is disabled.
+        """
+        self.cleanup()
+
+    def on_app_exit(self):
+        """
+        Handler called just before the Microdrop application exits.
+        """
+        self.cleanup()
+
+    def cleanup(self):
+        if self.plugin_timeout_id is not None:
+            gobject.source_remove(self.plugin_timeout_id)
+        if self.plugin is not None:
+            self.plugin = None
+
+    ###########################################################################
+    # Step event handler methods
     def on_step_run(self):
         """
         Handler called whenever a step is executed. Note that this signal
@@ -159,6 +186,97 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
                                 on_error=on_error)
         except:
             on_error()
+
+    def on_step_routes_complete(self, electrode_ids):
+        app = get_app()
+        logger.info('[DropletPlanningPlugin] check_routes_progress(): step %d',
+                    app.protocol.current_step_number)
+        # Transitions along all droplet routes have been processed.
+        # Signal step has completed and reset plugin step state.
+        emit_signal('on_step_complete', [self.name, None])
+
+    def on_step_options_swapped(self, plugin, old_step_number, step_number):
+        """
+        Handler called when the step options are changed for a particular
+        plugin.  This will, for example, allow for GUI elements to be
+        updated based on step specified.
+
+        Parameters:
+            plugin : plugin instance for which the step options changed
+            step_number : step number that the options changed for
+        """
+        pass
+
+    def on_step_swapped(self, old_step_number, step_number):
+        """
+        Handler called when the current step is swapped.
+        """
+        if self.plugin is not None:
+            self.plugin.execute_async(self.name, 'get_routes')
+
+    def on_step_inserted(self, step_number, *args):
+        app = get_app()
+        logger.info('[on_step_inserted] current step=%s, created step=%s',
+                    app.protocol.current_step_number, step_number)
+        self.clear_routes(step_number=step_number)
+
+    ###########################################################################
+    # Step options dependent methods
+    def add_route(self, electrode_ids):
+        '''
+        Add droplet route.
+
+        Args:
+
+            electrode_ids (list) : Ordered list of identifiers of electrodes on
+                route.
+        '''
+        drop_routes = self.get_routes()
+        route_i = (drop_routes.route_i.max() + 1
+                    if drop_routes.shape[0] > 0 else 0)
+        drop_route = (pd.DataFrame(electrode_ids, columns=['electrode_i'])
+                      .reset_index().rename(columns={'index': 'transition_i'}))
+        drop_route.insert(0, 'route_i', route_i)
+        drop_routes = drop_routes.append(drop_route, ignore_index=True)
+        self.set_routes(drop_routes)
+        return {'route_i': route_i, 'drop_routes': drop_routes}
+
+    def clear_routes(self, electrode_id=None, step_number=None):
+        '''
+        Clear all drop routes for protocol step that include the specified
+        electrode (identified by string identifier).
+        '''
+        step_options = self.get_step_options(step_number)
+
+        if electrode_id is None:
+            # No electrode identifier specified.  Clear all step routes.
+            df_drop_routes = self.default_drop_routes()
+        else:
+            df_drop_routes = step_options['drop_routes']
+            # Find indexes of all routes that include electrode.
+            routes_to_clear = df_drop_routes.loc[df_drop_routes.electrode_i ==
+                                                 electrode_id, 'route_i']
+            # Remove all routes that include electrode.
+            df_drop_routes = df_drop_routes.loc[~df_drop_routes.route_i
+                                                .isin(routes_to_clear
+                                                      .tolist())].copy()
+        step_options['drop_routes'] = df_drop_routes
+        self.set_step_values(step_options, step_number=step_number)
+
+    def get_routes(self, step_number=None):
+        step_options = self.get_step_options(step_number=step_number)
+        return step_options.get('drop_routes', self.default_drop_routes())
+
+    def set_routes(self, df_drop_routes, step_number=None):
+        step_options = self.get_step_options(step_number=step_number)
+        step_options['drop_routes'] = df_drop_routes
+        self.set_step_values(step_options, step_number=step_number)
+
+    ###########################################################################
+    # Route methods
+    def default_drop_routes(self):
+        return pd.DataFrame(None, columns=['route_i', 'electrode_i',
+                                           'transition_i'])
 
     def execute_routes(self, transition_duration_ms, route_i=None,
                        on_complete=None, on_error=None):
@@ -228,14 +346,6 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
                                 electrode_states=electrode_states,
                                 wait_func=gtk_wait)
 
-    def on_step_routes_complete(self, electrode_ids):
-        app = get_app()
-        logger.info('[DropletPlanningPlugin] check_routes_progress(): step %d',
-                    app.protocol.current_step_number)
-        # Transitions along all droplet routes have been processed.
-        # Signal step has completed and reset plugin step state.
-        emit_signal('on_step_complete', [self.name, None])
-
     def check_routes_progress(self, on_complete, on_error, continue_=True):
         try:
             electrode_ids = self.get_routes().electrode_i.unique()
@@ -253,108 +363,5 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
             return False
         return continue_
 
-    def on_step_options_swapped(self, plugin, old_step_number, step_number):
-        """
-        Handler called when the step options are changed for a particular
-        plugin.  This will, for example, allow for GUI elements to be
-        updated based on step specified.
-
-        Parameters:
-            plugin : plugin instance for which the step options changed
-            step_number : step number that the options changed for
-        """
-        pass
-
-    def on_step_swapped(self, old_step_number, step_number):
-        """
-        Handler called when the current step is swapped.
-        """
-        if self.plugin is not None:
-            self.plugin.execute_async(self.name, 'get_routes')
-
-    def get_schedule_requests(self, function_name):
-        """
-        Returns a list of scheduling requests (i.e., ScheduleRequest instances)
-        for the function specified by function_name.
-        """
-        if function_name in ['on_step_run']:
-            # Execute `on_step_run` before control board.
-            return [ScheduleRequest(self.name,
-                                    'wheelerlab.dmf_control_board_plugin')]
-        return []
-
-    def on_plugin_enable(self):
-        self.cleanup()
-        self.plugin = RouteControllerZmqPlugin(self, self.name, get_hub_uri())
-        # Initialize sockets.
-        self.plugin.reset()
-
-        self.plugin_timeout_id = gobject.timeout_add(10,
-                                                     self.plugin.check_sockets)
-
-    def cleanup(self):
-        if self.plugin_timeout_id is not None:
-            gobject.source_remove(self.plugin_timeout_id)
-        if self.plugin is not None:
-            self.plugin = None
-
-    def on_plugin_disable(self):
-        """
-        Handler called once the plugin instance is disabled.
-        """
-        self.cleanup()
-
-    def on_app_exit(self):
-        """
-        Handler called just before the Microdrop application exits.
-        """
-        self.cleanup()
-
-    def add_route(self, electrode_ids):
-        '''
-        Add droplet route.
-
-        Args:
-
-            electrode_ids (list) : Ordered list of identifiers of electrodes on
-                route.
-        '''
-        drop_routes = self.get_routes()
-        route_i = (drop_routes.route_i.max() + 1
-                    if drop_routes.shape[0] > 0 else 0)
-        drop_route = (pd.DataFrame(electrode_ids, columns=['electrode_i'])
-                      .reset_index().rename(columns={'index': 'transition_i'}))
-        drop_route.insert(0, 'route_i', route_i)
-        drop_routes = drop_routes.append(drop_route, ignore_index=True)
-        self.set_routes(drop_routes)
-        return {'route_i': route_i, 'drop_routes': drop_routes}
-
-    def on_step_inserted(self, step_number, *args):
-        app = get_app()
-        logger.info('[on_step_inserted] current step=%s, created step=%s',
-                    app.protocol.current_step_number, step_number)
-        self.clear_routes(step_number=step_number)
-
-    def clear_routes(self, electrode_id=None, step_number=None):
-        '''
-        Clear all drop routes for protocol step that include the specified
-        electrode (identified by string identifier).
-        '''
-        step_options = self.get_step_options(step_number)
-
-        if electrode_id is None:
-            # No electrode identifier specified.  Clear all step routes.
-            df_drop_routes = self.default_drop_routes()
-        else:
-            df_drop_routes = step_options['drop_routes']
-            # Find indexes of all routes that include electrode.
-            routes_to_clear = df_drop_routes.loc[df_drop_routes.electrode_i ==
-                                                 electrode_id, 'route_i']
-            # Remove all routes that include electrode.
-            df_drop_routes = df_drop_routes.loc[~df_drop_routes.route_i
-                                                .isin(routes_to_clear
-                                                      .tolist())].copy()
-        step_options['drop_routes'] = df_drop_routes
-        self.set_step_values(step_options, step_number=step_number)
 
 PluginGlobals.pop_env()
