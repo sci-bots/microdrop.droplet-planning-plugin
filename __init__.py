@@ -22,8 +22,7 @@ import logging
 
 from flatland import Integer, Form
 from microdrop.app_context import get_app, get_hub_uri
-from microdrop.plugin_helpers import (AppDataController, StepOptionsController,
-                                      get_plugin_info)
+from microdrop.plugin_helpers import StepOptionsController, get_plugin_info
 from microdrop.plugin_manager import (PluginGlobals, Plugin, IPlugin,
                                       ScheduleRequest, implements, emit_signal)
 from path_helpers import path
@@ -84,31 +83,13 @@ class RouteControllerZmqPlugin(ZmqPlugin):
             logger.error(str(data), exc_info=True)
 
 
-class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
+class DropletPlanningPlugin(Plugin, StepOptionsController):
     """
     This class is automatically registered with the PluginManager.
     """
     implements(IPlugin)
     version = get_plugin_info(path(__file__).parent).version
     plugin_name = get_plugin_info(path(__file__).parent).plugin_name
-
-    '''
-    AppFields
-    ---------
-
-    A flatland Form specifying application options for the current plugin.
-    Note that nested Form objects are not supported.
-
-    Since we subclassed AppDataController, an API is available to access and
-    modify these attributes.  This API also provides some nice features
-    automatically:
-        -all fields listed here will be included in the app options dialog
-            (unless properties=dict(show_in_gui=False) is used)
-        -the values of these fields will be stored persistently in the microdrop
-            config file, in a section named after this plugin's name attribute
-    '''
-    AppFields = Form.of(Integer.named('transition_duration_ms')
-                        .using(optional=True, default=750))
 
     '''
     StepFields
@@ -126,7 +107,8 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
     '''
     StepFields = Form.of(
         Integer.named('min_duration').using(default=0, optional=True),
-    )
+        Integer.named('transition_duration_ms').using(optional=True,
+                                                      default=750))
 
     def __init__(self):
         self.name = self.plugin_name
@@ -164,7 +146,7 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
             'Repeat' - repeat the step
             or 'Fail' - unrecoverable error (stop the protocol)
         """
-        app_values = self.get_app_values()
+        step_options = self.get_step_options()
 
         def on_error(*args):
             logger.error('Error executing routes.', exc_info=True)
@@ -172,7 +154,7 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
             emit_signal('on_step_complete', [self.name, 'Fail'])
 
         try:
-            self.execute_routes(app_values['transition_duration_ms'],
+            self.execute_routes(step_options['transition_duration_ms'],
                                 on_complete=self.on_step_routes_complete,
                                 on_error=on_error)
         except:
@@ -197,11 +179,13 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         # Get the number of transitions in each drop route.
         self.step_drop_route_lengths = drop_route_groups['route_i'].count()
         self.start_time = datetime.now()
-        gobject.idle_add(self.check_routes_progress, on_complete, on_error,
-                         False)
-        self.timeout_id = gobject.timeout_add(transition_duration_ms,
-                                              self.check_routes_progress,
-                                              on_complete, on_error)
+
+        def _first_pass():
+            self.check_routes_progress(on_complete, on_error, False)
+            self.timeout_id = gobject.timeout_add(transition_duration_ms,
+                                                  self.check_routes_progress,
+                                                  on_complete, on_error)
+        gobject.idle_add(_first_pass)
 
     def execute_transition(self, transition_i):
         electrode_ids = self.get_routes().electrode_i.unique()
@@ -300,20 +284,6 @@ class DropletPlanningPlugin(Plugin, AppDataController, StepOptionsController):
         return []
 
     def on_plugin_enable(self):
-        """
-        Handler called once the plugin instance is enabled.
-
-        Note: if you inherit your plugin from AppDataController and don't
-        implement this handler, by default, it will automatically load all
-        app options from the config file. If you decide to overide the
-        default handler, you should call:
-
-            AppDataController.on_plugin_enable(self)
-
-        to retain this functionality.
-        """
-        super(DropletPlanningPlugin, self).on_plugin_enable()
-
         self.cleanup()
         self.plugin = RouteControllerZmqPlugin(self, self.name, get_hub_uri())
         # Initialize sockets.
