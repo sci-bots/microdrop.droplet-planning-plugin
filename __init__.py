@@ -250,26 +250,25 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
 
         if electrode_id is None:
             # No electrode identifier specified.  Clear all step routes.
-            df_drop_routes = self.default_drop_routes()
+            df_routes = self.default_drop_routes()
         else:
-            df_drop_routes = step_options['drop_routes']
+            df_routes = step_options['drop_routes']
             # Find indexes of all routes that include electrode.
-            routes_to_clear = df_drop_routes.loc[df_drop_routes.electrode_i ==
-                                                 electrode_id, 'route_i']
+            routes_to_clear = df_routes.loc[df_routes.electrode_i ==
+                                            electrode_id, 'route_i']
             # Remove all routes that include electrode.
-            df_drop_routes = df_drop_routes.loc[~df_drop_routes.route_i
-                                                .isin(routes_to_clear
-                                                      .tolist())].copy()
-        step_options['drop_routes'] = df_drop_routes
+            df_routes = df_routes.loc[~df_routes.route_i
+                                      .isin(routes_to_clear.tolist())].copy()
+        step_options['drop_routes'] = df_routes
         self.set_step_values(step_options, step_number=step_number)
 
     def get_routes(self, step_number=None):
         step_options = self.get_step_options(step_number=step_number)
         return step_options.get('drop_routes', self.default_drop_routes())
 
-    def set_routes(self, df_drop_routes, step_number=None):
+    def set_routes(self, df_routes, step_number=None):
         step_options = self.get_step_options(step_number=step_number)
-        step_options['drop_routes'] = df_drop_routes
+        step_options['drop_routes'] = df_routes
         self.set_step_values(step_options, step_number=step_number)
 
     ###########################################################################
@@ -282,14 +281,14 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
                        on_complete=None, on_error=None):
         # Reset any routes that are currently running (if any).
         self.reset_routes()
-        df_drop_routes = self.get_routes()
+        df_routes = self.get_routes()
 
         if route_i is not None:
             # A route index was specified.  Only process transitions from
             # specified route.
-            df_drop_routes = df_drop_routes[df_drop_routes.route_i == route_i]
+            df_routes = df_routes[df_routes.route_i == route_i]
 
-        drop_route_groups = df_drop_routes.groupby('route_i')
+        drop_route_groups = df_routes.groupby('route_i')
         # Look up the drop routes for the current step.
         self.step_drop_routes = OrderedDict([(route_j, df_route_j)
                                              for route_j, df_route_j in
@@ -299,20 +298,38 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         self.start_time = datetime.now()
 
         def _first_pass():
-            self.check_routes_progress(on_complete, on_error, False)
+            self.check_routes_progress(df_routes, on_complete, on_error, False)
             self.timeout_id = gobject.timeout_add(transition_duration_ms,
                                                   self.check_routes_progress,
-                                                  on_complete, on_error)
+                                                  df_routes, on_complete,
+                                                  on_error)
         gobject.idle_add(_first_pass)
 
-    def execute_transition(self, transition_i):
-        electrode_ids = self.get_routes().electrode_i.unique()
+    def check_routes_progress(self, df_routes, on_complete, on_error,
+                              continue_=True):
+        try:
+            route_electrode_ids = df_routes.electrode_i.unique()
 
+            if self.transition_counter < self.step_drop_route_lengths.max():
+                self.execute_transition(route_electrode_ids,
+                                        self.transition_counter)
+                self.transition_counter += 1
+            else:
+                self.reset_routes(route_electrode_ids)
+                if on_complete is not None:
+                    on_complete(route_electrode_ids)
+                return False
+        except:
+            if on_error is not None: on_error()
+            return False
+        return continue_
+
+    def execute_transition(self, route_electrode_ids, transition_i):
         active_step_lengths = (self.step_drop_route_lengths
                                .loc[self.step_drop_route_lengths >
                                     transition_i])
 
-        electrode_states = pd.Series(-1, index=electrode_ids, dtype=int)
+        electrode_states = pd.Series(-1, index=route_electrode_ids, dtype=int)
         for route_i, length_i in active_step_lengths.iteritems():
             # Remove custom coloring for previously active electrode.
             if transition_i > 0:
@@ -328,40 +345,24 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
                             electrode_states=modified_electrode_states,
                             wait_func=gtk_wait)
 
-    def reset_routes(self):
+    def reset_routes(self, route_electrode_ids=None):
         if self.timeout_id is not None:
             gobject.source_remove(self.timeout_id)
             self.timeout_id = None
         self.start_time = None
         self.transition_counter = 0
 
-        electrode_ids = self.get_routes().electrode_i.unique()
-        if electrode_ids.shape[0] > 0:
+        if route_electrode_ids is not None and (route_electrode_ids.shape[0] >
+                                                0):
             # At least one drop route exists for current step.
             # Deactivate all electrodes on any droplet route from current step.
-            electrode_states = pd.Series(0, index=electrode_ids, dtype=int)
+            electrode_states = pd.Series(0, index=route_electrode_ids,
+                                         dtype=int)
             self.plugin.execute('wheelerlab'
                                 '.electrode_controller_plugin',
                                 'set_electrode_states',
                                 electrode_states=electrode_states,
                                 wait_func=gtk_wait)
-
-    def check_routes_progress(self, on_complete, on_error, continue_=True):
-        try:
-            electrode_ids = self.get_routes().electrode_i.unique()
-
-            if self.transition_counter < self.step_drop_route_lengths.max():
-                self.execute_transition(self.transition_counter)
-                self.transition_counter += 1
-            else:
-                self.reset_routes()
-                if on_complete is not None:
-                    on_complete(electrode_ids)
-                return False
-        except:
-            if on_error is not None: on_error()
-            return False
-        return continue_
 
 
 PluginGlobals.pop_env()
