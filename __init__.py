@@ -131,6 +131,12 @@ class RouteController(object):
         route_info['transition_duration_ms'] = transition_duration_ms
         route_info['trail_length'] = trail_length
 
+        # Find cycle routes, i.e., where first electrode matches last
+        # electrode.
+        route_starts = df_routes.groupby('route_i').nth(0)['electrode_i']
+        route_ends = df_routes.groupby('route_i').nth(-1)['electrode_i']
+        route_info['cycles'] = route_starts[route_starts == route_ends]
+
         # Look up the drop routes for the current.
         route_info['routes'] = OrderedDict([(route_j, df_route_j)
                                             for route_j, df_route_j in
@@ -212,6 +218,11 @@ class RouteController(object):
             s_transition_i = (route_info['routes'][route_i]
                               .iloc[start_i:end_i + 1])
             electrode_states[s_transition_i.electrode_i] = 1
+
+            if route_i in route_info['cycles'] and end_i + 1 > length_i:
+                s_transition_i = (route_info['routes'][route_i]
+                                  .iloc[:end_i - length_i + 2])
+                electrode_states[s_transition_i.electrode_i] = 1
 
         modified_electrode_states = electrode_states[electrode_states >= 0]
         self.plugin.execute('wheelerlab.electrode_controller_plugin',
