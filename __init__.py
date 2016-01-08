@@ -21,6 +21,7 @@ from datetime import datetime
 import logging
 
 from flatland import Integer, Form
+from flatland.validation import ValueAtLeast
 from microdrop.app_context import get_app, get_hub_uri
 from microdrop.plugin_helpers import StepOptionsController, get_plugin_info
 from microdrop.plugin_manager import (PluginGlobals, Plugin, IPlugin,
@@ -263,10 +264,13 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         -the values of these fields will be stored persistently for each step
     '''
     StepFields = Form.of(
-        Integer.named('trail_length').using(default=1, optional=True),
+        Integer.named('trail_length').using(default=1, optional=True,
+                                            validators=
+                                            [ValueAtLeast(minimum=1)]),
         Integer.named('min_duration').using(default=0, optional=True),
-        Integer.named('transition_duration_ms').using(optional=True,
-                                                      default=750))
+        Integer.named('transition_duration_ms')
+        .using(optional=True, default=750,
+               validators=[ValueAtLeast(minimum=0)]))
 
     def __init__(self):
         self.name = self.plugin_name
