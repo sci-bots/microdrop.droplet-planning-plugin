@@ -104,7 +104,7 @@ class RouteController(object):
                                            'transition_i'])
 
     def execute_routes(self, df_routes, transition_duration_ms,
-                       on_complete=None, on_error=None):
+                       on_complete=None, on_error=None, trail_length=1):
         '''
         Begin execution of a set of routes.
 
@@ -128,6 +128,7 @@ class RouteController(object):
         route_info['electrode_ids'] = df_routes.electrode_i.unique()
         route_info['transition_counter'] = 0
         route_info['transition_duration_ms'] = transition_duration_ms
+        route_info['trail_length'] = trail_length
 
         # Look up the drop routes for the current.
         route_info['routes'] = OrderedDict([(route_j, df_route_j)
@@ -149,8 +150,10 @@ class RouteController(object):
         '''
         route_info = self.route_info
         try:
-            if (route_info['transition_counter'] <
-                    route_info['route_lengths'].max()):
+            stop_i = (route_info['route_lengths'].max() +
+                      route_info['trail_length'] - 1)
+            logger.debug('[check_routes_progress] stop_i: %s', stop_i)
+            if (route_info['transition_counter'] < stop_i):
                 # There is at least one route with remaining transitions to
                 # execute.
                 self.execute_transition()
@@ -178,22 +181,37 @@ class RouteController(object):
         index) in each route with a sufficient number of transitions.
         '''
         route_info = self.route_info
+
+        stop_i = route_info['route_lengths'] + route_info['trail_length'] - 1
         active_route_lengths = (route_info['route_lengths']
-                                .loc[route_info['route_lengths'] >
-                                     route_info['transition_counter']])
+                                .loc[route_info['transition_counter'] <
+                                     stop_i])
 
         electrode_states = pd.Series(-1, index=route_info['electrode_ids'],
                                      dtype=int)
+
         for route_i, length_i in active_route_lengths.iteritems():
-            # Remove custom coloring for previously active electrode.
-            if route_info['transition_counter'] > 0:
+            start_i = max(0, route_info['transition_counter'] -
+                          route_info['trail_length'] + 1)
+            end_i = route_info['transition_counter']
+            if start_i == end_i:
+                logger.debug('[execute_transition] route %d: %s', route_i,
+                             start_i)
+            else:
+                logger.debug('[execute_transition] route %d: %s-%s', route_i,
+                             start_i, end_i)
+
+            # Deactivate electrodes from previous route transition.
+            if start_i > 0:
                 s_transition_i = (route_info['routes'][route_i]
-                                  .iloc[route_info['transition_counter'] - 1])
+                                  .iloc[start_i - 1])
                 electrode_states[s_transition_i.electrode_i] = 0
-            # Add custom coloring to active electrode.
+
+            # Activate electrodes for current route transition.
             s_transition_i = (route_info['routes'][route_i]
-                              .iloc[route_info['transition_counter']])
+                              .iloc[start_i:end_i + 1])
             electrode_states[s_transition_i.electrode_i] = 1
+
         modified_electrode_states = electrode_states[electrode_states >= 0]
         self.plugin.execute('wheelerlab.electrode_controller_plugin',
                             'set_electrode_states',
@@ -245,6 +263,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         -the values of these fields will be stored persistently for each step
     '''
     StepFields = Form.of(
+        Integer.named('trail_length').using(default=1, optional=True),
         Integer.named('min_duration').using(default=0, optional=True),
         Integer.named('transition_duration_ms').using(optional=True,
                                                       default=750))
@@ -322,14 +341,12 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
             df_routes = self.get_routes()
             self.route_controller.execute_routes(
                 df_routes, step_options['transition_duration_ms'],
+                trail_length=step_options['trail_length'],
                 on_complete=self.on_step_routes_complete, on_error=on_error)
         except:
             on_error()
 
     def on_step_routes_complete(self, electrode_ids):
-        app = get_app()
-        logger.info('[DropletPlanningPlugin] check_routes_progress(): step %d',
-                    app.protocol.current_step_number)
         # Transitions along all droplet routes have been processed.
         # Signal step has completed and reset plugin step state.
         emit_signal('on_step_complete', [self.name, None])
