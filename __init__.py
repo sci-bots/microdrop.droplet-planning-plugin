@@ -157,8 +157,7 @@ class RouteController(object):
         '''
         route_info = self.route_info
         try:
-            stop_i = (route_info['route_lengths'].max() +
-                      route_info['trail_length'] - 1)
+            stop_i = route_info['route_lengths'].max()
             logger.debug('[check_routes_progress] stop_i: %s', stop_i)
             if (route_info['transition_counter'] < stop_i):
                 # There is at least one route with remaining transitions to
@@ -198,9 +197,12 @@ class RouteController(object):
                                      dtype=int)
 
         for route_i, length_i in active_route_lengths.iteritems():
-            start_i = max(0, route_info['transition_counter'] -
-                          route_info['trail_length'] + 1)
-            end_i = route_info['transition_counter']
+            # Trail follows transition corresponding to *transition counter* by
+            # the specified *trail length*.
+            start_i = route_info['transition_counter']
+            end_i = (route_info['transition_counter'] +
+                     route_info['trail_length'] - 1)
+
             if start_i == end_i:
                 logger.debug('[execute_transition] route %d: %s', route_i,
                              start_i)
