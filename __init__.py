@@ -26,7 +26,9 @@ from microdrop.app_context import get_app, get_hub_uri
 from microdrop.plugin_helpers import StepOptionsController, get_plugin_info
 from microdrop.plugin_manager import (PluginGlobals, Plugin, IPlugin,
                                       ScheduleRequest, implements, emit_signal)
+from pygtkhelpers.utils import refresh_gui
 from path_helpers import path
+from si_prefix import si_format
 from zmq_plugin.plugin import Plugin as ZmqPlugin
 from zmq_plugin.schema import decode_content_data
 import gobject
@@ -38,7 +40,6 @@ logger = logging.getLogger(__name__)
 
 PluginGlobals.push_env('microdrop.managed')
 
-def gtk_wait(wait_duration_s): gtk.main_iteration_do()
 
 class RouteControllerZmqPlugin(ZmqPlugin):
     '''
@@ -175,7 +176,8 @@ class RouteController(object):
                 # All route transitions have executed.
                 self.reset()
                 if on_complete is not None:
-                    on_complete(route_info['electrode_ids'])
+                    on_complete(route_info['start_time'],
+                                route_info['electrode_ids'])
         except:
             # An error occurred while executing routes.
             if on_error is not None: on_error()
@@ -211,7 +213,7 @@ class RouteController(object):
                              start_i, end_i)
 
             # Deactivate electrodes from previous route transition.
-            if start_i > 0:
+            if start_i > 0 and start_i < length_i:
                 s_transition_i = (route_info['routes'][route_i]
                                   .iloc[start_i - 1])
                 electrode_states[s_transition_i.electrode_i] = 0
@@ -230,7 +232,7 @@ class RouteController(object):
         self.plugin.execute('wheelerlab.electrode_controller_plugin',
                             'set_electrode_states',
                             electrode_states=modified_electrode_states,
-                            save=False, wait_func=gtk_wait)
+                            save=False, wait_func=lambda *args: refresh_gui())
 
     def reset(self):
         '''
@@ -250,7 +252,8 @@ class RouteController(object):
                                 '.electrode_controller_plugin',
                                 'set_electrode_states',
                                 electrode_states=electrode_states,
-                                save=False, wait_func=gtk_wait)
+                                save=False, wait_func=lambda *args:
+                                refresh_gui())
         self.route_info = {'transition_counter': 0}
 
 
@@ -283,7 +286,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         Integer.named('route_repeats').using(default=1, optional=True,
                                             validators=
                                             [ValueAtLeast(minimum=1)]),
-        Integer.named('min_duration').using(default=0, optional=True),
+        Integer.named('repeat_duration_s').using(default=0, optional=True),
         Integer.named('transition_duration_ms')
         .using(optional=True, default=750,
                validators=[ValueAtLeast(minimum=0)]))
@@ -292,6 +295,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         self.name = self.plugin_name
         self.plugin = None
         self.plugin_timeout_id = None
+        self.step_start_time = None
         self.route_controller = None
 
     def get_schedule_requests(self, function_name):
@@ -359,6 +363,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
 
         try:
             self.repeat_i = 0
+            self.step_start_time = datetime.now()
             df_routes = self.get_routes()
             self.route_controller.execute_routes(
                 df_routes, step_options['transition_duration_ms'],
@@ -368,9 +373,16 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         except:
             self.on_error()
 
-    def on_step_routes_complete(self, electrode_ids):
+    def on_step_routes_complete(self, start_time, electrode_ids):
         step_options = self.get_step_options()
-        if self.repeat_i + 1 < step_options['route_repeats']:
+        step_duration_s = (datetime.now() -
+                           self.step_start_time).total_seconds()
+        if ((step_options['repeat_duration_s'] > 0 and step_duration_s <
+             step_options['repeat_duration_s']) or
+            (self.repeat_i + 1 < step_options['route_repeats'])):
+            # Either repeat duration has not been met, or the specified number
+            # of repetitions has not been met.  Execute another iteration of
+            # the routes.
             self.repeat_i += 1
             df_routes = self.get_routes()
             self.route_controller.execute_routes(
@@ -379,6 +391,8 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
                 on_complete=self.on_step_routes_complete,
                 on_error=self.on_error)
         else:
+            logger.info('Completed routes (%s repeats in %ss)', self.repeat_i +
+                        1, si_format(step_duration_s))
             # Transitions along all droplet routes have been processed.
             # Signal step has completed and reset plugin step state.
             emit_signal('on_step_complete', [self.name, None])
