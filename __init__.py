@@ -198,7 +198,7 @@ class RouteController(object):
         self.plugin.execute('wheelerlab.electrode_controller_plugin',
                             'set_electrode_states',
                             electrode_states=modified_electrode_states,
-                            wait_func=gtk_wait)
+                            save=False, wait_func=gtk_wait)
 
     def reset(self):
         '''
@@ -218,7 +218,7 @@ class RouteController(object):
                                 '.electrode_controller_plugin',
                                 'set_electrode_states',
                                 electrode_states=electrode_states,
-                                wait_func=gtk_wait)
+                                save=False, wait_func=gtk_wait)
         self.route_info = {'transition_counter': 0}
 
 
