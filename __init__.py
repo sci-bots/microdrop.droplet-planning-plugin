@@ -267,6 +267,9 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         Integer.named('trail_length').using(default=1, optional=True,
                                             validators=
                                             [ValueAtLeast(minimum=1)]),
+        Integer.named('route_repeats').using(default=1, optional=True,
+                                            validators=
+                                            [ValueAtLeast(minimum=1)]),
         Integer.named('min_duration').using(default=0, optional=True),
         Integer.named('transition_duration_ms')
         .using(optional=True, default=750,
@@ -319,6 +322,11 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
 
     ###########################################################################
     # Step event handler methods
+    def on_error(self, *args):
+        logger.error('Error executing routes.', exc_info=True)
+        # An error occurred while initializing Analyst remote control.
+        emit_signal('on_step_complete', [self.name, 'Fail'])
+
     def on_step_run(self):
         """
         Handler called whenever a step is executed. Note that this signal
@@ -336,24 +344,31 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         """
         step_options = self.get_step_options()
 
-        def on_error(*args):
-            logger.error('Error executing routes.', exc_info=True)
-            # An error occurred while initializing Analyst remote control.
-            emit_signal('on_step_complete', [self.name, 'Fail'])
-
         try:
+            self.repeat_i = 0
             df_routes = self.get_routes()
             self.route_controller.execute_routes(
                 df_routes, step_options['transition_duration_ms'],
                 trail_length=step_options['trail_length'],
-                on_complete=self.on_step_routes_complete, on_error=on_error)
+                on_complete=self.on_step_routes_complete,
+                on_error=self.on_error)
         except:
-            on_error()
+            self.on_error()
 
     def on_step_routes_complete(self, electrode_ids):
-        # Transitions along all droplet routes have been processed.
-        # Signal step has completed and reset plugin step state.
-        emit_signal('on_step_complete', [self.name, None])
+        step_options = self.get_step_options()
+        if self.repeat_i + 1 < step_options['route_repeats']:
+            self.repeat_i += 1
+            df_routes = self.get_routes()
+            self.route_controller.execute_routes(
+                df_routes, step_options['transition_duration_ms'],
+                trail_length=step_options['trail_length'],
+                on_complete=self.on_step_routes_complete,
+                on_error=self.on_error)
+        else:
+            # Transitions along all droplet routes have been processed.
+            # Signal step has completed and reset plugin step state.
+            emit_signal('on_step_complete', [self.name, None])
 
     def on_step_options_swapped(self, plugin, old_step_number, step_number):
         """
