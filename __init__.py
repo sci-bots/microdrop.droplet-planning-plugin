@@ -166,17 +166,23 @@ class RouteController(object):
             df_routes = df_routes.loc[cyclic_mask].copy()
         elif not cyclic and not acyclic:
             df_routes = df_routes.iloc[0:0]
-        route_info['df_routes'] = df_routes
-        route_groups = df_routes.groupby('route_i')
-
+        route_info['df_routes'] = df_routes.copy()
         route_info['electrode_ids'] = df_routes.electrode_i.unique()
+
+        route_groups = route_info['df_routes'].groupby('route_i')
+        # Get the number of transitions in each drop route.
+        route_info['route_lengths'] = route_groups['route_i'].count()
+        route_info['df_routes']['route_length'] = (route_info['route_lengths']
+                                                   [route_info['df_routes']
+                                                    .route_i].values)
+        route_info['df_routes']['cyclic'] = (route_info['df_routes'].route_i
+                                             .isin(route_info['cycles']
+                                                   .index.tolist()))
 
         # Look up the drop routes for the current.
         route_info['routes'] = OrderedDict([(route_j, df_route_j)
                                             for route_j, df_route_j in
                                             route_groups])
-        # Get the number of transitions in each drop route.
-        route_info['route_lengths'] = route_groups['route_i'].count()
         route_info['start_time'] = datetime.now()
 
         def _first_pass():
