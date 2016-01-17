@@ -125,7 +125,8 @@ class RouteController(object):
                                            'transition_i'])
 
     def execute_routes(self, df_routes, transition_duration_ms,
-                       on_complete=None, on_error=None, trail_length=1):
+                       on_complete=None, on_error=None, trail_length=1,
+                       cyclic=True, acyclic=True):
         '''
         Begin execution of a set of routes.
 
@@ -137,16 +138,17 @@ class RouteController(object):
                 execution of all routes.
             on_error (function) : Callback function called upon error during
                 execution of any route.
+            cyclic (bool) : Execute cyclic routes (i.e., a route that ends on
+                the same electrode that it starts on).
+            acyclic (bool) : Execute acyclic routes.
         '''
         # Stop execution (if running).
         self.reset()
-        route_groups = df_routes.groupby('route_i')
 
         route_info = {}
         self.route_info = route_info
 
         route_info['df_routes'] = df_routes
-        route_info['electrode_ids'] = df_routes.electrode_i.unique()
         route_info['transition_counter'] = 0
         route_info['transition_duration_ms'] = transition_duration_ms
         route_info['trail_length'] = trail_length
@@ -156,6 +158,18 @@ class RouteController(object):
         route_starts = df_routes.groupby('route_i').nth(0)['electrode_i']
         route_ends = df_routes.groupby('route_i').nth(-1)['electrode_i']
         route_info['cycles'] = route_starts[route_starts == route_ends]
+        cyclic_mask = df_routes.route_i.isin(route_info['cycles']
+                                             .index.tolist())
+        if not cyclic:
+            df_routes = df_routes.loc[~cyclic_mask].copy()
+        elif not acyclic:
+            df_routes = df_routes.loc[cyclic_mask].copy()
+        elif not cyclic and not acyclic:
+            df_routes = df_routes.iloc[0:0]
+        route_info['df_routes'] = df_routes
+        route_groups = df_routes.groupby('route_i')
+
+        route_info['electrode_ids'] = df_routes.electrode_i.unique()
 
         # Look up the drop routes for the current.
         route_info['routes'] = OrderedDict([(route_j, df_route_j)
@@ -242,7 +256,10 @@ class RouteController(object):
             # Activate electrodes for current route transition.
             s_transition_i = (route_info['routes'][route_i]
                               .iloc[start_i:end_i + 1])
-            electrode_states[s_transition_i.electrode_i] = 1
+            try:
+                electrode_states[s_transition_i.electrode_i] = 1
+            except ValueError:
+                import IPython; IPython.embed()
 
             if route_i in route_info['cycles'] and end_i + 1 > length_i:
                 s_transition_i = (route_info['routes'][route_i]
@@ -408,6 +425,14 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
             self.on_error()
 
     def on_step_routes_complete(self, start_time, electrode_ids):
+        '''
+        Callback function executed when all concurrent routes for a step have
+        completed a single run.
+
+        If repeats are requested, either through repeat counts or a repeat
+        duration, *cycle* routes (i.e., routes that terminate at the start
+        electrode) will repeat as necessary.
+        '''
         step_options = self.get_step_options()
         step_duration_s = (datetime.now() -
                            self.step_start_time).total_seconds()
@@ -422,6 +447,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
             self.route_controller.execute_routes(
                 df_routes, step_options['transition_duration_ms'],
                 trail_length=step_options['trail_length'],
+                cyclic=True, acyclic=False,
                 on_complete=self.on_step_routes_complete,
                 on_error=self.on_error)
         else:
