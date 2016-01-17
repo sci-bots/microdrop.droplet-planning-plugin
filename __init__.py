@@ -176,6 +176,8 @@ class RouteController(object):
         Callback called by periodic timeout at intervals of
         `transition_duration_ms` until all routes are completed.
         '''
+        if 'route_lengths' not in self.route_info:
+            return False
         route_info = self.route_info
         try:
             stop_i = route_info['route_lengths'].max()
