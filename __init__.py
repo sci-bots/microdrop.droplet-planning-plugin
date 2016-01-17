@@ -32,7 +32,6 @@ from si_prefix import si_format
 from zmq_plugin.plugin import Plugin as ZmqPlugin
 from zmq_plugin.schema import decode_content_data
 import gobject
-import gtk
 import pandas as pd
 import zmq
 
@@ -366,6 +365,14 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         # An error occurred while initializing Analyst remote control.
         emit_signal('on_step_complete', [self.name, 'Fail'])
 
+    def on_protocol_pause(self):
+        self.kill_running_step()
+
+    def kill_running_step(self):
+        # Stop execution of any routes that are currently running.
+        if self.route_controller is not None:
+            self.route_controller.reset()
+
     def on_step_run(self):
         """
         Handler called whenever a step is executed. Note that this signal
@@ -381,6 +388,11 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
             'Repeat' - repeat the step
             or 'Fail' - unrecoverable error (stop the protocol)
         """
+        app = get_app()
+        if not app.running:
+            return
+
+        self.kill_running_step()
         step_options = self.get_step_options()
 
         try:
@@ -429,12 +441,17 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
             plugin : plugin instance for which the step options changed
             step_number : step number that the options changed for
         """
-        pass
+        logger.info('[on_step_swapped] old step=%s, step=%s', old_step_number,
+                    step_number)
+        self.kill_running_step()
 
     def on_step_swapped(self, old_step_number, step_number):
         """
         Handler called when the current step is swapped.
         """
+        logger.info('[on_step_swapped] old step=%s, step=%s', old_step_number,
+                    step_number)
+        self.kill_running_step()
         if self.plugin is not None:
             self.plugin.execute_async(self.name, 'get_routes')
 
