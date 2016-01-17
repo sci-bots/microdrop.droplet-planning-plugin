@@ -79,15 +79,35 @@ class RouteControllerZmqPlugin(ZmqPlugin):
     def on_execute__execute_routes(self, request):
         data = decode_content_data(request)
         try:
-            df_routes = self.get_routes()
+            df_routes = self.parent.get_routes()
+            step_options = self.parent.get_step_options()
+            # Set transition duration based on request parameter.  If no
+            # duration was provided, use the transition duration from the
+            # current step.
+            transition_duration_ms = data.get('transition_duration_ms',
+                                              step_options
+                                              ['transition_duration_ms'])
+            # Set trail length based on request parameter.  If no trail length
+            # was provided, use the trail length from the current step.
+            trail_length = data.get('trail_length',
+                                    step_options['trail_length'])
             if 'route_i' in data:
                 # A route index was specified.  Only process transitions from
                 # specified route.
                 df_routes = df_routes.loc[df_routes.route_i == data['route_i']]
+            elif 'electrode_id' in data and data['electrode_id'] is not None:
+                # An electrode identifier was specified.  Only process routes
+                # passing through specified electrode.
+                routes_to_execute = df_routes.loc[df_routes.electrode_i ==
+                                                  data['electrode_id'],
+                                                  'route_i']
+                # Select only routes that include electrode.
+                df_routes = df_routes.loc[df_routes.route_i
+                                          .isin(routes_to_execute
+                                                .tolist())].copy()
             route_controller = RouteController(self)
-            return route_controller.execute_routes(df_routes,
-                                                   data
-                                                   ['transition_duration_ms'])
+            route_controller.execute_routes(df_routes, transition_duration_ms,
+                                            trail_length=trail_length)
         except:
             logger.error(str(data), exc_info=True)
 
