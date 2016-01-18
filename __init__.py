@@ -122,7 +122,7 @@ class RouteController(object):
     @staticmethod
     def default_routes():
         return pd.DataFrame(None, columns=['route_i', 'electrode_i',
-                                           'transition_i'])
+                                           'transition_i'], dtype='int32')
 
     def execute_routes(self, df_routes, transition_duration_ms,
                        on_complete=None, on_error=None, trail_length=1,
@@ -231,48 +231,53 @@ class RouteController(object):
         '''
         route_info = self.route_info
 
-        stop_i = route_info['route_lengths'] + route_info['trail_length'] - 1
-        active_route_lengths = (route_info['route_lengths']
-                                .loc[route_info['transition_counter'] <
-                                     stop_i])
+        # Trail follows transition corresponding to *transition counter* by
+        # the specified *trail length*.
+        start_i = route_info['transition_counter']
+        end_i = (route_info['transition_counter'] + route_info['trail_length']
+                 - 1)
 
-        electrode_states = pd.Series(-1, index=route_info['electrode_ids'],
-                                     dtype=int)
+        if start_i == end_i:
+            logger.debug('[execute_transition] %s', start_i)
+        else:
+            logger.debug('[execute_transition] %s-%s', start_i, end_i)
 
-        for route_i, length_i in active_route_lengths.iteritems():
-            # Trail follows transition corresponding to *transition counter* by
-            # the specified *trail length*.
-            start_i = route_info['transition_counter']
-            end_i = (route_info['transition_counter'] +
-                     route_info['trail_length'] - 1)
+        df_routes = route_info['df_routes']
+        start_i_mod = start_i % df_routes.route_length
+        end_i_mod = end_i % df_routes.route_length
 
-            if start_i == end_i:
-                logger.debug('[execute_transition] route %d: %s', route_i,
-                             start_i)
-            else:
-                logger.debug('[execute_transition] route %d: %s-%s', route_i,
-                             start_i, end_i)
+        #  1. Within the specified trail length of the current transition
+        #     counter of a single pass.
+        single_pass_mask = ((df_routes.transition_i >= start_i) &
+                            (df_routes.transition_i <= end_i))
+        #  2. Within the specified trail length of the current transition
+        #     counter in the second route pass.
+        second_pass_mask = (max(end_i, start_i) < 2 * df_routes.route_length)
+        #  3. Start marker is higher than end marker, i.e., end has wrapped
+        #     around to the start of the route.
+        wrap_around_mask = ((end_i_mod < start_i_mod) &
+                            ((df_routes.transition_i >= start_i_mod) |
+                             (df_routes.transition_i <= end_i_mod + 1)))
+        #  4. Start marker is less than end marker, but start and end marker
+        #     are *not* necessarily less than the route length, since they are
+        #     modulo the route length.
+        subsequent_pass_mask = ((end_i_mod >= start_i_mod) &
+                                (df_routes.transition_i >= start_i_mod) &
+                                (df_routes.transition_i <= end_i_mod))
 
-            # Deactivate electrodes from previous route transition.
-            if start_i > 0 and start_i < length_i:
-                s_transition_i = (route_info['routes'][route_i]
-                                  .iloc[start_i - 1])
-                electrode_states[s_transition_i.electrode_i] = 0
+        # Find active transitions based on the transition counter.
+        active_transition_mask = (single_pass_mask |
+                                  # Only consider wrap-around transitions for
+                                  # the second pass of cyclic routes.
+                                  (df_routes.cyclic & second_pass_mask &
+                                   wrap_around_mask))
+                                   #(subsequent_pass_mask | wrap_around_mask)))
 
-            # Activate electrodes for current route transition.
-            s_transition_i = (route_info['routes'][route_i]
-                              .iloc[start_i:end_i + 1])
-            try:
-                electrode_states[s_transition_i.electrode_i] = 1
-            except ValueError:
-                import IPython; IPython.embed()
+        df_routes['active'] = active_transition_mask.astype(int)
+        active_electrode_mask = (df_routes.groupby('electrode_i')['active']
+                                 .sum())
 
-            if route_i in route_info['cycles'] and end_i + 1 > length_i:
-                s_transition_i = (route_info['routes'][route_i]
-                                  .iloc[:end_i - length_i + 2])
-                electrode_states[s_transition_i.electrode_i] = 1
-
-        modified_electrode_states = electrode_states[electrode_states >= 0]
+        modified_electrode_states = active_electrode_mask.astype(bool)
         self.plugin.execute('wheelerlab.electrode_controller_plugin',
                             'set_electrode_states',
                             electrode_states=modified_electrode_states,
