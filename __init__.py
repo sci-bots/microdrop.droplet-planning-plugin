@@ -258,12 +258,6 @@ class RouteController(object):
         wrap_around_mask = ((end_i_mod < start_i_mod) &
                             ((df_routes.transition_i >= start_i_mod) |
                              (df_routes.transition_i <= end_i_mod + 1)))
-        #  4. Start marker is less than end marker, but start and end marker
-        #     are *not* necessarily less than the route length, since they are
-        #     modulo the route length.
-        subsequent_pass_mask = ((end_i_mod >= start_i_mod) &
-                                (df_routes.transition_i >= start_i_mod) &
-                                (df_routes.transition_i <= end_i_mod))
 
         # Find active transitions based on the transition counter.
         active_transition_mask = (single_pass_mask |
