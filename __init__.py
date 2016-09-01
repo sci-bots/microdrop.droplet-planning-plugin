@@ -277,7 +277,15 @@ class RouteController(object):
         active_electrode_mask = (df_routes.groupby('electrode_i')['active']
                                  .sum())
 
-        modified_electrode_states = active_electrode_mask.astype(bool)
+        # An electrode may appear twice in the list of modified electrode
+        # states in cases where the same channel is mapped to multiple
+        # electrodes.
+        #
+        # Sort electrode states with "on" electrodes listed first so the "on"
+        # state will take precedence when the electrode controller plugin drops
+        # duplicate states for the same electrode.
+        modified_electrode_states = (active_electrode_mask.astype(bool)
+                                     .sort_values(ascending=False))
         self.plugin.execute('wheelerlab.electrode_controller_plugin',
                             'set_electrode_states',
                             electrode_states=modified_electrode_states,
