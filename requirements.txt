@@ -1,1 +1,8 @@
-analyst-remote-control
+microdrop-plugin-template
+microdrop-utility
+pandas
+path-helpers
+pygtkhelpers
+pyyaml
+si-prefix
+zmq-plugin
