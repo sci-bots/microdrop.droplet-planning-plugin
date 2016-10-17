@@ -2,7 +2,7 @@ microdrop-plugin-template
 microdrop-utility
 pandas
 path-helpers
-pygtkhelpers
+wheeler.pygtkhelpers
 pyyaml
 si-prefix
 zmq-plugin
