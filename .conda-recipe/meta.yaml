@@ -36,4 +36,4 @@ requirements:
 
 about:
   home: http://github.com/wheeler-microfluidics/droplet-planning-plugin
-  license: GPL
+  license: BSD
