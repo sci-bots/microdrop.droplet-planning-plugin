@@ -4,3 +4,6 @@
 .sconsign.dblite
 *.pyc
 properties.yml
+
+# Ignore build script auto-generated during Conda package build.
+bld.bat

@@ -4,17 +4,20 @@ source:
   git_url: ../
 
 package:
-  name: droplet-planning-plugin-requirements
+  name: droplet_planning_plugin
 {% if GIT_DESCRIBE_NUMBER > '0' %}
   version: {{ GIT_DESCRIBE_TAG[1:] }}.post{{ GIT_DESCRIBE_NUMBER }}
 {% else %}
   version: {{ GIT_DESCRIBE_TAG[1:] }}
 {% endif %}
 
+build:
+  number: 0
+  script: python -m mpm.bin.build
+
 requirements:
   build:
-    - microdrop-plugin-template
-    - microdrop-utility
+    - microdrop >=2.4
     - pandas
     - path_helpers >=0.2.post4
     - pyyaml
@@ -23,8 +26,7 @@ requirements:
     - zmq-plugin >=0.2.post2
 
   run:
-    - microdrop-plugin-template
-    - microdrop-utility
+    - microdrop >=2.4
     - pandas
     - path_helpers >=0.2.post4
     - pyyaml
