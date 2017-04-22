@@ -18,6 +18,7 @@ build:
 requirements:
   build:
     - microdrop >=2.4
+    - microdrop-plugin-manager >=0.11
     - pandas
     - path_helpers >=0.2.post4
     - pyyaml
@@ -27,12 +28,17 @@ requirements:
 
   run:
     - microdrop >=2.4
+    - microdrop-plugin-manager >=0.11
     - pandas
     - path_helpers >=0.2.post4
     - pyyaml
     - si-prefix
     - wheeler.pygtkhelpers
     - zmq-plugin >=0.2.post2
+
+test:
+  commands:
+    - python -c "import importlib; import mpm.api; import os; import sys; sys.path.insert(0, mpm.api.MICRODROP_CONDA_SHARE.joinpath('plugins', 'available')); importlib.import_module(os.environ.get('PKG_NAME'))"
 
 about:
   home: http://github.com/wheeler-microfluidics/droplet-planning-plugin
