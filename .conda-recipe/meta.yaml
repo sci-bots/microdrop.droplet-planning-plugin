@@ -4,7 +4,7 @@ source:
   git_url: ../
 
 package:
-  name: droplet_planning_plugin
+  name: microdrop.droplet-planning-plugin
 {% if GIT_DESCRIBE_NUMBER > '0' %}
   version: {{ GIT_DESCRIBE_TAG[1:] }}.post{{ GIT_DESCRIBE_NUMBER }}
 {% else %}
@@ -17,8 +17,8 @@ build:
 
 requirements:
   build:
-    - microdrop >=2.4
-    - microdrop-plugin-manager >=0.11
+    - microdrop >=2.7
+    - microdrop-plugin-manager >=0.14
     - pandas
     - path_helpers >=0.2.post4
     - pyyaml
@@ -27,8 +27,8 @@ requirements:
     - zmq-plugin >=0.2.post2
 
   run:
-    - microdrop >=2.4
-    - microdrop-plugin-manager >=0.11
+    - microdrop >=2.7
+    - microdrop-plugin-manager >=0.14
     - pandas
     - path_helpers >=0.2.post4
     - pyyaml
@@ -38,7 +38,7 @@ requirements:
 
 test:
   commands:
-    - python -c "import importlib; import mpm.api; import os; import sys; sys.path.insert(0, mpm.api.MICRODROP_CONDA_SHARE.joinpath('plugins', 'available')); importlib.import_module(os.environ.get('PKG_NAME'))"
+    - python -m mpm.bin.import_test -a {{ PKG_NAME }}
 
 about:
   home: http://github.com/wheeler-microfluidics/droplet-planning-plugin
