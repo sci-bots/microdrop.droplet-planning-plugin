@@ -478,17 +478,30 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
             plugin : plugin instance for which the step options changed
             step_number : step number that the options changed for
         """
-        logger.info('[on_step_swapped] old step=%s, step=%s', old_step_number,
-                    step_number)
+        logger.info('[on_step_options_swapped] old step=%s, step=%s',
+                    old_step_number, step_number)
         self.kill_running_step()
 
     def on_step_swapped(self, old_step_number, step_number):
         """
         Handler called when the current step is swapped.
         """
-        logger.info('[on_step_swapped] old step=%s, step=%s', old_step_number,
-                    step_number)
-        self.kill_running_step()
+        app = get_app()
+        logger.debug('[on_step_swapped] old step=%s, step=%s',
+                     old_step_number, step_number)
+
+        # If we're not running and the step has changed, kill any running
+        # steps (routes could be running, for example, if a user exectued
+        # them from the right click menu, then clicked on another row).
+        # If we are running a protocol, ignore "on_step_swapped" signals
+        # so that we don't "run" the same routes twice (i.e., once in
+        # response on "on_step_run" and again in response to
+        # "on_step_swapped" (see [here][1]).
+        #
+        # [1]: https://github.com/wheeler-microfluidics/droplet-planning-plugin/issues/1
+        if not app.running:
+            self.kill_running_step()
+
         if self.plugin is not None:
             self.plugin.execute_async(self.name, 'get_routes')
 
