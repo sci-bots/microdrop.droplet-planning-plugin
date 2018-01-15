@@ -41,5 +41,5 @@ test:
     - python -m mpm.bin.import_test -a {{ PKG_NAME }}
 
 about:
-  home: http://github.com/wheeler-microfluidics/droplet-planning-plugin
+  home: https://github.com/sci-bots/{{ PKG_NAME }}
   license: BSD
