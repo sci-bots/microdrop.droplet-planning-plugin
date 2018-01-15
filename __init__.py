@@ -17,6 +17,11 @@ import gobject
 import pandas as pd
 import zmq
 
+from ._version import get_versions
+
+__version__ = get_versions()['version']
+del get_versions
+
 logger = logging.getLogger(__name__)
 
 PluginGlobals.push_env('microdrop.managed')
@@ -43,7 +48,7 @@ class RouteControllerZmqPlugin(ZmqPlugin):
         data = decode_content_data(request)
         try:
             return self.parent.add_route(data['drop_route'])
-        except:
+        except Exception:
             logger.error(str(data), exc_info=True)
 
     def on_execute__get_routes(self, request):
@@ -52,9 +57,9 @@ class RouteControllerZmqPlugin(ZmqPlugin):
     def on_execute__clear_routes(self, request):
         data = decode_content_data(request)
         try:
-            return self.parent.clear_routes(electrode_id=
-                                            data.get('electrode_id'))
-        except:
+            return self.parent.clear_routes(electrode_id=data
+                                            .get('electrode_id'))
+        except Exception:
             logger.error(str(data), exc_info=True)
 
     def on_execute__execute_routes(self, request):
@@ -89,7 +94,7 @@ class RouteControllerZmqPlugin(ZmqPlugin):
             route_controller = RouteController(self)
             route_controller.execute_routes(df_routes, transition_duration_ms,
                                             trail_length=trail_length)
-        except:
+        except Exception:
             logger.error(str(data), exc_info=True)
 
 
@@ -201,9 +206,10 @@ class RouteController(object):
                 if on_complete is not None:
                     on_complete(route_info['start_time'],
                                 route_info['electrode_ids'])
-        except:
+        except Exception:
             # An error occurred while executing routes.
-            if on_error is not None: on_error()
+            if on_error is not None:
+                on_error()
         return False
 
     def execute_transition(self):
@@ -247,7 +253,7 @@ class RouteController(object):
                                   # the second pass of cyclic routes.
                                   (df_routes.cyclic & second_pass_mask &
                                    wrap_around_mask))
-                                   #(subsequent_pass_mask | wrap_around_mask)))
+                                  # (subsequent_pass_mask | wrap_around_mask)))
 
         df_routes['active'] = active_transition_mask.astype(int)
         active_electrode_mask = (df_routes.groupby('electrode_i')['active']
@@ -276,7 +282,7 @@ class RouteController(object):
             del self.route_info['timeout_id']
 
         if ('electrode_ids' in self.route_info and
-            (self.route_info['electrode_ids'].shape[0] > 0)):
+                (self.route_info['electrode_ids'].shape[0] > 0)):
             # At least one route exists.
             # Deactivate all electrodes belonging to all routes.
             electrode_states = pd.Series(0, index=self.route_info
@@ -312,12 +318,10 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         -the values of these fields will be stored persistently for each step
     '''
     StepFields = Form.of(
-        Integer.named('trail_length').using(default=1, optional=True,
-                                            validators=
-                                            [ValueAtLeast(minimum=1)]),
-        Integer.named('route_repeats').using(default=1, optional=True,
-                                            validators=
-                                            [ValueAtLeast(minimum=1)]),
+        Integer.named('trail_length')
+        .using(default=1, optional=True, validators=[ValueAtLeast(minimum=1)]),
+        Integer.named('route_repeats')
+        .using(default=1, optional=True, validators=[ValueAtLeast(minimum=1)]),
         Integer.named('repeat_duration_s').using(default=0, optional=True),
         Integer.named('transition_duration_ms')
         .using(optional=True, default=750,
@@ -414,7 +418,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
                 trail_length=step_options['trail_length'],
                 on_complete=self.on_step_routes_complete,
                 on_error=self.on_error)
-        except:
+        except Exception:
             self.on_error()
 
     def on_step_routes_complete(self, start_time, electrode_ids):
@@ -431,7 +435,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
                            self.step_start_time).total_seconds()
         if ((step_options['repeat_duration_s'] > 0 and step_duration_s <
              step_options['repeat_duration_s']) or
-            (self.repeat_i + 1 < step_options['route_repeats'])):
+                (self.repeat_i + 1 < step_options['route_repeats'])):
             # Either repeat duration has not been met, or the specified number
             # of repetitions has not been met.  Execute another iteration of
             # the routes.
@@ -506,7 +510,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         '''
         drop_routes = self.get_routes()
         route_i = (drop_routes.route_i.max() + 1
-                    if drop_routes.shape[0] > 0 else 0)
+                   if drop_routes.shape[0] > 0 else 0)
         drop_route = (pd.DataFrame(electrode_ids, columns=['electrode_i'])
                       .reset_index().rename(columns={'index': 'transition_i'}))
         drop_route.insert(0, 'route_i', route_i)
@@ -547,7 +551,3 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
 
 
 PluginGlobals.pop_env()
-
-from ._version import get_versions
-__version__ = get_versions()['version']
-del get_versions
