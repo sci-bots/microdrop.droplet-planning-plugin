@@ -1,4 +1,13 @@
 @echo off
+REM Do not excecute script if `PKG_NAME` environment variable is not set.
+REM
+REM See: https://github.com/sci-bots/microdrop/issues/250
+IF NOT DEFINED PKG_NAME ( 
+  echo Do not excecute script since `PKG_NAME` environment variable is not set.
+  echo See https://github.com/sci-bots/microdrop/issues/250 for more info.
+  exit /b
+)
+
 REM Strip `microdrop.` prefix (i.e., first 10 characters) from package name.
 set PLUGIN_NAME=%PKG_NAME:~10%
 REM Replace hyphen characters with underscores.
