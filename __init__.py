@@ -401,9 +401,17 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
             None
             'Repeat' - repeat the step
             or 'Fail' - unrecoverable error (stop the protocol)
+
+
+        .. versionchanged:: X.X.X
+            Emit ``on_step_complete`` signal in real-time mode and explicitly
+            if there are no routes to execute.
         """
         app = get_app()
         if not app.running:
+            if app.realtime_mode:
+                # Do not automatically execute route in real-time mode.
+                emit_signal('on_step_complete', [self.name, None])
             return
 
         self.kill_running_step()
@@ -413,11 +421,16 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
             self.repeat_i = 0
             self.step_start_time = datetime.now()
             df_routes = self.get_routes()
-            self.route_controller.execute_routes(
-                df_routes, step_options['transition_duration_ms'],
-                trail_length=step_options['trail_length'],
-                on_complete=self.on_step_routes_complete,
-                on_error=self.on_error)
+            if not df_routes.shape[0]:
+                # Signal step has completed since there are no routes to
+                # execute.
+                emit_signal('on_step_complete', [self.name, None])
+            else:
+                self.route_controller.execute_routes(
+                    df_routes, step_options['transition_duration_ms'],
+                    trail_length=step_options['trail_length'],
+                    on_complete=self.on_step_routes_complete,
+                    on_error=self.on_error)
         except Exception:
             self.on_error()
 
