@@ -5,6 +5,7 @@ import logging
 from flatland import Integer, Form
 from flatland.validation import ValueAtLeast
 from microdrop.app_context import get_app, get_hub_uri
+from microdrop.logging_helpers import _L  #: .. versionadded: X.X.X
 from microdrop.plugin_helpers import StepOptionsController, get_plugin_info
 from microdrop.plugin_manager import (PluginGlobals, Plugin, IPlugin,
                                       ScheduleRequest, implements, emit_signal)
@@ -49,7 +50,7 @@ class RouteControllerZmqPlugin(ZmqPlugin):
         try:
             return self.parent.add_route(data['drop_route'])
         except Exception:
-            logger.error(str(data), exc_info=True)
+            _L().error(str(data), exc_info=True)
 
     def on_execute__get_routes(self, request):
         return self.parent.get_routes()
@@ -60,7 +61,7 @@ class RouteControllerZmqPlugin(ZmqPlugin):
             return self.parent.clear_routes(electrode_id=data
                                             .get('electrode_id'))
         except Exception:
-            logger.error(str(data), exc_info=True)
+            _L().error(str(data), exc_info=True)
 
     def on_execute__execute_routes(self, request):
         data = decode_content_data(request)
@@ -95,7 +96,7 @@ class RouteControllerZmqPlugin(ZmqPlugin):
             route_controller.execute_routes(df_routes, transition_duration_ms,
                                             trail_length=trail_length)
         except Exception:
-            logger.error(str(data), exc_info=True)
+            _L().error(str(data), exc_info=True)
 
 
 class RouteController(object):
@@ -187,7 +188,7 @@ class RouteController(object):
         route_info = self.route_info
         try:
             stop_i = route_info['route_lengths'].max()
-            logger.debug('[check_routes_progress] stop_i: %s', stop_i)
+            _L().debug('stop_i: %s', stop_i)
             if (route_info['transition_counter'] < stop_i):
                 # There is at least one route with remaining transitions to
                 # execute.
@@ -226,9 +227,9 @@ class RouteController(object):
                  - 1)
 
         if start_i == end_i:
-            logger.debug('[execute_transition] %s', start_i)
+            _L().debug('%s', start_i)
         else:
-            logger.debug('[execute_transition] %s-%s', start_i, end_i)
+            _L().debug('%s-%s', start_i, end_i)
 
         df_routes = route_info['df_routes']
         start_i_mod = start_i % df_routes.route_length
@@ -375,7 +376,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
     ###########################################################################
     # Step event handler methods
     def on_error(self, *args):
-        logger.error('Error executing routes.', exc_info=True)
+        _L().error('Error executing routes.', exc_info=True)
         # An error occurred while initializing Analyst remote control.
         emit_signal('on_step_complete', [self.name, 'Fail'])
 
@@ -461,8 +462,8 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
                 on_complete=self.on_step_routes_complete,
                 on_error=self.on_error)
         else:
-            logger.info('Completed routes (%s repeats in %ss)', self.repeat_i +
-                        1, si_format(step_duration_s))
+            _L().info('Completed routes (%s repeats in %ss)', self.repeat_i
+                          + 1, si_format(step_duration_s))
             # Transitions along all droplet routes have been processed.
             # Signal step has completed and reset plugin step state.
             emit_signal('on_step_complete', [self.name, None])
@@ -477,8 +478,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
             plugin : plugin instance for which the step options changed
             step_number : step number that the options changed for
         """
-        logger.info('[on_step_options_swapped] old step=%s, step=%s',
-                    old_step_number, step_number)
+        _L().info('%s -> %s', old_step_number, step_number)
         self.kill_running_step()
 
     def on_step_swapped(self, old_step_number, step_number):
@@ -486,8 +486,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         Handler called when the current step is swapped.
         """
         app = get_app()
-        logger.debug('[on_step_swapped] old step=%s, step=%s',
-                     old_step_number, step_number)
+        _L().debug('%s -> %s', old_step_number, step_number)
 
         # If we're not running and the step has changed, kill any running
         # steps (routes could be running, for example, if a user exectued
@@ -506,8 +505,8 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
 
     def on_step_inserted(self, step_number, *args):
         app = get_app()
-        logger.info('[on_step_inserted] current step=%s, created step=%s',
-                    app.protocol.current_step_number, step_number)
+        _L().info('current step=%s, created step=%s',
+                      app.protocol.current_step_number, step_number)
         self.clear_routes(step_number=step_number)
 
     ###########################################################################
