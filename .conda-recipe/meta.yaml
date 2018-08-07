@@ -18,6 +18,8 @@ build:
 
 requirements:
   build:
+    #: .. versionadded:: X.X.X
+    - logging-helpers >=0.4
     #: .. versionchanged:: X.X.X
     - microdrop >=2.20
     - microdrop-plugin-manager >=0.14
@@ -29,6 +31,8 @@ requirements:
     - zmq-plugin >=0.2.post2
 
   run:
+    #: .. versionadded:: X.X.X
+    - logging-helpers >=0.4
     #: .. versionchanged:: X.X.X
     - microdrop >=2.20
     - microdrop-plugin-manager >=0.14
