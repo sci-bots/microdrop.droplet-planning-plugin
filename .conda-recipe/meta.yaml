@@ -21,7 +21,7 @@ requirements:
     #: .. versionadded:: X.X.X
     - logging-helpers >=0.4
     #: .. versionchanged:: X.X.X
-    - microdrop >=2.20
+    - microdrop >=2.25
     - microdrop-plugin-manager >=0.14
     - pandas
     - path_helpers >=0.2.post4
@@ -34,7 +34,7 @@ requirements:
     #: .. versionadded:: X.X.X
     - logging-helpers >=0.4
     #: .. versionchanged:: X.X.X
-    - microdrop >=2.20
+    - microdrop >=2.25
     - microdrop-plugin-manager >=0.14
     - pandas
     - path_helpers >=0.2.post4
