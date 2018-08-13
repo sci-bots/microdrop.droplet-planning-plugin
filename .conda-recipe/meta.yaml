@@ -18,7 +18,10 @@ build:
 
 requirements:
   build:
-    - microdrop >=2.7
+    #: .. versionadded:: 2.4
+    - logging-helpers >=0.4
+    #: .. versionchanged:: 2.4
+    - microdrop >=2.25
     - microdrop-plugin-manager >=0.14
     - pandas
     - path_helpers >=0.2.post4
@@ -28,7 +31,10 @@ requirements:
     - zmq-plugin >=0.2.post2
 
   run:
-    - microdrop >=2.7
+    #: .. versionadded:: 2.4
+    - logging-helpers >=0.4
+    #: .. versionchanged:: 2.4
+    - microdrop >=2.25
     - microdrop-plugin-manager >=0.14
     - pandas
     - path_helpers >=0.2.post4
