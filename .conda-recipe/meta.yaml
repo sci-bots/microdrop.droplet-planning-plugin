@@ -18,9 +18,9 @@ build:
 
 requirements:
   build:
-    #: .. versionadded:: X.X.X
+    #: .. versionadded:: 2.4
     - logging-helpers >=0.4
-    #: .. versionchanged:: X.X.X
+    #: .. versionchanged:: 2.4
     - microdrop >=2.25
     - microdrop-plugin-manager >=0.14
     - pandas
@@ -31,9 +31,9 @@ requirements:
     - zmq-plugin >=0.2.post2
 
   run:
-    #: .. versionadded:: X.X.X
+    #: .. versionadded:: 2.4
     - logging-helpers >=0.4
-    #: .. versionchanged:: X.X.X
+    #: .. versionchanged:: 2.4
     - microdrop >=2.25
     - microdrop-plugin-manager >=0.14
     - pandas

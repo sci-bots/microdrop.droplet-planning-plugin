@@ -5,7 +5,7 @@ from flatland import Integer, Form
 from flatland.validation import ValueAtLeast
 from microdrop.app_context import get_hub_uri
 from microdrop.interfaces import IElectrodeMutator, IPlugin
-from microdrop.logging_helpers import _L  #: .. versionadded: X.X.X
+from microdrop.logging_helpers import _L  #: .. versionadded: 2.4
 from microdrop.plugin_helpers import StepOptionsController, get_plugin_info
 from microdrop.plugin_manager import (PluginGlobals, Plugin, ScheduleRequest,
                                       implements)
@@ -82,7 +82,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
     This class is automatically registered with the PluginManager.
 
 
-    .. versionchanged:: X.X.X
+    .. versionchanged:: 2.4
         Refactor to implement the `IElectrodeMutator` interface, which
         delegates route execution to the
         ``microdrop.electrode_controller_plugin``.
