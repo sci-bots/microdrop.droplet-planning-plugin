@@ -7,7 +7,8 @@ from flatland.validation import ValueAtLeast
 from microdrop.app_context import get_hub_uri
 from microdrop.interfaces import IElectrodeMutator, IPlugin
 from microdrop.logging_helpers import _L  #: .. versionadded: 2.4
-from microdrop.plugin_helpers import StepOptionsController, get_plugin_info
+from microdrop.plugin_helpers import (StepOptionsController, get_plugin_info,
+                                      hub_execute_async)
 from microdrop.plugin_manager import (PluginGlobals, Plugin, ScheduleRequest,
                                       implements)
 from path_helpers import path
@@ -122,24 +123,37 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
 
     def get_schedule_requests(self, function_name):
         """
-        Returns a list of scheduling requests (i.e., ScheduleRequest instances)
-        for the function specified by function_name.
+        .. versionchanged:: X.X.X
+            Enable _after_ command plugin and zmq hub to ensure command can be
+            registered.
         """
         if function_name in ['on_step_run']:
             # Execute `on_step_run` before control board.
             return [ScheduleRequest(self.name, 'dmf_control_board_plugin')]
+        elif function_name == 'on_plugin_enable':
+            return [ScheduleRequest('microdrop.zmq_hub_plugin', self.name),
+                    ScheduleRequest('microdrop.command_plugin', self.name)]
         return []
 
     def on_plugin_enable(self):
         '''
         .. versionchanged:: X.X.X
-            Use `zmq_plugin.plugin.watch_plugin()` to monitor ZeroMQ
-            interface in background thread.
+            - Use `zmq_plugin.plugin.watch_plugin()` to monitor ZeroMQ
+              interface in background thread.
+            - Register `clear_routes` commands with ``microdrop.command_plugin``.
         '''
         self.cleanup()
         self.plugin = RouteControllerZmqPlugin(self, self.name, get_hub_uri())
 
         self._plugin_monitor_task = watch_plugin(self.executor, self.plugin)
+
+        hub_execute_async('microdrop.command_plugin', 'register_command',
+                          command_name='clear_routes', namespace='global',
+                          plugin_name=self.name, title='Clear all r_outes')
+        hub_execute_async('microdrop.command_plugin', 'register_command',
+                          command_name='clear_routes', namespace='electrode',
+                          plugin_name=self.name, title='Clear electrode '
+                          '_routes')
 
     def on_plugin_disable(self):
         """
