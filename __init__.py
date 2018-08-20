@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from concurrent.futures import ThreadPoolExecutor
 import logging
 
 from flatland import Integer, Form
@@ -10,9 +11,8 @@ from microdrop.plugin_helpers import StepOptionsController, get_plugin_info
 from microdrop.plugin_manager import (PluginGlobals, Plugin, ScheduleRequest,
                                       implements)
 from path_helpers import path
-from zmq_plugin.plugin import Plugin as ZmqPlugin
+from zmq_plugin.plugin import Plugin as ZmqPlugin, watch_plugin
 from zmq_plugin.schema import decode_content_data
-import gobject
 import pandas as pd
 import zmq
 
@@ -115,10 +115,10 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
 
     def __init__(self):
         self.name = self.plugin_name
-        self.plugin = None
-        self.plugin_timeout_id = None
-        self.step_start_time = None
         self._electrode_states = iter([])
+        self.plugin = None
+        self.executor = ThreadPoolExecutor(max_workers=1)
+        self._plugin_monitor_task = None
 
     def get_schedule_requests(self, function_name):
         """
@@ -131,14 +131,15 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         return []
 
     def on_plugin_enable(self):
+        '''
+        .. versionchanged:: X.X.X
+            Use `zmq_plugin.plugin.watch_plugin()` to monitor ZeroMQ
+            interface in background thread.
+        '''
         self.cleanup()
         self.plugin = RouteControllerZmqPlugin(self, self.name, get_hub_uri())
-        self.route_controller = RouteController(self.plugin)
-        # Initialize sockets.
-        self.plugin.reset()
 
-        self.plugin_timeout_id = gobject.timeout_add(10,
-                                                     self.plugin.check_sockets)
+        self._plugin_monitor_task = watch_plugin(self.executor, self.plugin)
 
     def on_plugin_disable(self):
         """
@@ -153,10 +154,10 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         self.cleanup()
 
     def cleanup(self):
-        if self.plugin_timeout_id is not None:
-            gobject.source_remove(self.plugin_timeout_id)
         if self.plugin is not None:
             self.plugin = None
+        if self._plugin_monitor_task is not None:
+            self._plugin_monitor_task.cancel()
 
     ###########################################################################
     # Step event handler methods
