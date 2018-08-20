@@ -28,7 +28,7 @@ requirements:
     - pyyaml
     - si-prefix
     - wheeler.pygtkhelpers
-    #: .. versionchanged:: X.X.X
+    #: .. versionchanged:: 2.5
     #:     Require `watch_plugin()` function.
     - zmq-plugin >=0.4
 
@@ -43,7 +43,7 @@ requirements:
     - pyyaml
     - si-prefix
     - wheeler.pygtkhelpers
-    #: .. versionchanged:: X.X.X
+    #: .. versionchanged:: 2.5
     #:     Require `watch_plugin()` function.
     - zmq-plugin >=0.4
 

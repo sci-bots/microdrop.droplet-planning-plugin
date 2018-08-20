@@ -123,7 +123,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
 
     def get_schedule_requests(self, function_name):
         """
-        .. versionchanged:: X.X.X
+        .. versionchanged:: 2.5
             Enable _after_ command plugin and zmq hub to ensure command can be
             registered.
         """
@@ -137,7 +137,7 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
 
     def on_plugin_enable(self):
         '''
-        .. versionchanged:: X.X.X
+        .. versionchanged:: 2.5
             - Use `zmq_plugin.plugin.watch_plugin()` to monitor ZeroMQ
               interface in background thread.
             - Register `clear_routes` commands with ``microdrop.command_plugin``.
