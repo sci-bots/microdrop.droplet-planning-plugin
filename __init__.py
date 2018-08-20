@@ -4,9 +4,9 @@ import logging
 
 from flatland import Integer, Form
 from flatland.validation import ValueAtLeast
+from logging_helpers import _L
 from microdrop.app_context import get_hub_uri
 from microdrop.interfaces import IElectrodeMutator, IPlugin
-from microdrop.logging_helpers import _L  #: .. versionadded: 2.4
 from microdrop.plugin_helpers import (StepOptionsController, get_plugin_info,
                                       hub_execute_async)
 from microdrop.plugin_manager import (PluginGlobals, Plugin, ScheduleRequest,
