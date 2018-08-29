@@ -87,6 +87,10 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         Refactor to implement the `IElectrodeMutator` interface, which
         delegates route execution to the
         ``microdrop.electrode_controller_plugin``.
+
+    .. versionchanged:: 2.5.2
+        Explicitly set human-readable title for ``repeat_duration_s`` step
+        field to ``"Repeat duration (s)"``.
     """
     implements(IPlugin)
     implements(IElectrodeMutator)
@@ -112,7 +116,9 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         .using(default=1, optional=True, validators=[ValueAtLeast(minimum=1)]),
         Integer.named('route_repeats')
         .using(default=1, optional=True, validators=[ValueAtLeast(minimum=1)]),
-        Integer.named('repeat_duration_s').using(default=0, optional=True))
+        Integer.named('repeat_duration_s').using(default=0, optional=True,
+                                                 properties={'title': 'Repeat '
+                                                             'duration (s)'}))
 
     def __init__(self):
         self.name = self.plugin_name
