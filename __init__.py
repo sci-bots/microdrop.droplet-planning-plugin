@@ -132,11 +132,11 @@ class DropletPlanningPlugin(Plugin, StepOptionsController):
         .. versionchanged:: 2.5
             Enable _after_ command plugin and zmq hub to ensure command can be
             registered.
+
+        .. versionchanged:: 2.5.3
+            Remove scheduling requests for deprecated `on_step_run()` method.
         """
-        if function_name in ['on_step_run']:
-            # Execute `on_step_run` before control board.
-            return [ScheduleRequest(self.name, 'dmf_control_board_plugin')]
-        elif function_name == 'on_plugin_enable':
+        if function_name == 'on_plugin_enable':
             return [ScheduleRequest('microdrop.zmq_hub_plugin', self.name),
                     ScheduleRequest('microdrop.command_plugin', self.name)]
         return []
